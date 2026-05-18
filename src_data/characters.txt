@@ -1,0 +1,5 @@
+id,name,element,hp,speed
+1,Squirtle,1,100,50
+2,Charmander,2,90,55
+3,Bulbasaur,3,110,45
+4,Pikachu,4,80,60

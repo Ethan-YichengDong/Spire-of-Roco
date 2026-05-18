@@ -1,0 +1,5 @@
+id,name,element,type,energy,damage,defense,buff_effect,buff_value,buff_duration
+1,Water Splash,1,0,1,10,0,2,0,2
+2,Fireball,2,0,2,25,0,3,5,2
+3,Vine Whip,3,0,1,12,0,0,0,0
+4,Thunder Shock,4,0,1,15,0,0,0,0
