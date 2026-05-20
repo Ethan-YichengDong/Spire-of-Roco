@@ -3,6 +3,7 @@
 
 // 获取原始面板伤害
 int GetRawDamage(Card* card, Character* attacker) {
+    (void)attacker; // 屏蔽未使用参数的警告，后续增加攻击力buff时会用到
     return card->base_damage; 
 }
 
