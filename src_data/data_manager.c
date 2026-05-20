@@ -94,3 +94,23 @@ void add_reward_to_deck(Player* player, int card_id) {
         }
     }
 }
+
+// 初始化抽牌堆和弃牌堆
+void init_deck(Player* p) {
+    p->draw_count = 0;
+    p->discard_count = 0;
+}
+
+// 执行抽牌操作，将牌从牌库压入手牌
+void draw_card(Player* p, int amount) {
+    for (int i = 0; i < amount; i++) {
+        // 如果手牌没满且牌库有牌，则从牌库抽出
+        if (p->hand_count < MAX_HAND_SIZE && p->draw_count > 0) {
+            p->hand[p->hand_count++] = p->draw_pile[--p->draw_count];
+        } else {
+            // 后期可拓展触发重新洗牌的逻辑
+            break;
+        }
+    }
+}
+

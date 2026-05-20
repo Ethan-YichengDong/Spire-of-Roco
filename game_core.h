@@ -16,6 +16,9 @@ typedef enum { BUFF_NONE = 0, BUFF_SHIELD, BUFF_WET, BUFF_BURN, BUFF_POISON, BUF
 // 行动类型定义：无、出牌、切换角色、结束回合
 typedef enum { ACTION_NONE = 0, ACTION_PLAY_CARD, ACTION_SWITCH_CHAR, ACTION_END_TURN } ActionType;
 
+// 全局游戏状态所属的场景节点
+typedef enum { SCENE_MENU = 0, SCENE_DRAFT, SCENE_BATTLE, SCENE_RESULT } AppScene;
+
 // 卡牌结构体定义
 typedef struct {
     int card_id;                // 卡牌ID
@@ -52,6 +55,10 @@ typedef struct {
     int max_energy;             // 最大能量值上限
     Card hand[MAX_HAND_SIZE];   // 手牌列表
     int hand_count;             // 当前手牌数量
+    Card draw_pile[MAX_DECK_SIZE];   // 抽牌堆
+    int draw_count;                  // 抽牌堆数量
+    Card discard_pile[MAX_DECK_SIZE];// 弃牌堆
+    int discard_count;               // 弃牌堆数量
 } Player;
 
 // 游戏全局状态结构体定义
@@ -61,6 +68,8 @@ typedef struct {
     int round_count;            // 回合数计数器
     int current_turn;           // 当前轮到哪位玩家行动的出牌权（1或2）
     int game_stage;             // 游戏阶段标志
+    AppScene current_scene;     // 当前全局游戏状态
+    int global_auras[5];        // 全局特征/环境干涉光环
 } GameState;
 
 // 行动指令结构体定义
@@ -69,6 +78,7 @@ typedef struct {
     int actor_id;               // 行动发起者ID
     int card_hand_idx;          // 当打出卡牌时使用，记录出手牌列表索引
     int switch_to_idx;          // 当切换角色时使用，记录目标角色索引
+    int target_idx;             // 目标对象的索引（用于指定技能和普攻释放目标）
 } Action;
 
 #endif // GAME_CORE_H

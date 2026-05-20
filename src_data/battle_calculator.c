@@ -1,6 +1,32 @@
 #include "battle_calculator.h"
 #include <stdio.h>
 
+// 获取原始面板伤害
+int GetRawDamage(Card* card, Character* attacker) {
+    return card->base_damage; 
+}
+
+// 防御截获与反应增幅
+int CalculateMitigation(int raw_damage, Card* card, Character* target) {
+    int damage = raw_damage;
+    if (card->element == ELEMENT_WATER && target->element == ELEMENT_FIRE) damage *= 2;
+    else if (card->element == ELEMENT_FIRE && target->element == ELEMENT_GRASS) damage *= 2;
+    else if (card->element == ELEMENT_GRASS && target->element == ELEMENT_WATER) damage *= 2;
+    
+    if (card->element == ELEMENT_ELECTRIC && target->buffs[BUFF_WET] > 0) damage *= 2;
+    
+    return damage;
+}
+
+// 真实扣血与生命检查
+void CommitDamageAndCheck(int final_damage, Character* target) {
+    target->hp -= final_damage;
+    if (target->hp <= 0) {
+        target->hp = 0;
+        target->is_alive = 0;
+    }
+}
+
 // 执行应用具体行动：切换角色或对目标释放卡牌技能的结算
 static void apply_action(Player* acting_player, Player* target_player, Action action) {
     // 切换出战角色的行动
@@ -14,31 +40,22 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
         if (action.card_hand_idx >= 0 && action.card_hand_idx < acting_player->hand_count) {
             Card played_card = acting_player->hand[action.card_hand_idx];
             Character* target_char = &target_player->team[target_player->active_idx];
+            Character* active_char = &acting_player->team[acting_player->active_idx];
 
             // 检查能量是否足够释放此牌
             if (acting_player->energy >= played_card.energy_cost) {
                 acting_player->energy -= played_card.energy_cost;
 
-                // 计算基础伤害
-                int damage = played_card.base_damage;
-
-                // 元素克制系统：水克火，火克草，草克水
-                if (played_card.element == ELEMENT_WATER && target_char->element == ELEMENT_FIRE) damage *= 2;
-                else if (played_card.element == ELEMENT_FIRE && target_char->element == ELEMENT_GRASS) damage *= 2;
-                else if (played_card.element == ELEMENT_GRASS && target_char->element == ELEMENT_WATER) damage *= 2;
-                // 雷元素对附带水Buff（潮湿）的目标可以造成翻倍伤害
-                if (played_card.element == ELEMENT_ELECTRIC && target_char->buffs[BUFF_WET] > 0) damage *= 2;
-
-                // 应用卡牌附加的增益/减益效果（Buff/Debuff）
-                if (played_card.buff_effect != BUFF_NONE) {
-                    target_char->buffs[played_card.buff_effect] = played_card.buff_duration;
+                // === 开启三段式伤害结算流水线 ===
+                if (played_card.base_damage > 0) {
+                    int raw = GetRawDamage(&played_card, active_char);
+                    int final_dmg = CalculateMitigation(raw, &played_card, target_char);
+                    CommitDamageAndCheck(final_dmg, target_char);
                 }
 
-                // 计算最终扣血并检查存活状态
-                target_char->hp -= damage;
-                if (target_char->hp <= 0) {
-                    target_char->hp = 0;
-                    target_char->is_alive = 0;
+                // 应用附加的增益/减益效果（Buff/Debuff）
+                if (played_card.buff_effect != BUFF_NONE) {
+                    target_char->buffs[played_card.buff_effect] = played_card.buff_duration;
                 }
             }
 

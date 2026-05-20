@@ -23,6 +23,7 @@ void RunGameLoop() {
     state.round_count = 1;      // 当前回合数初始化
     state.current_turn = 1;     // 设置为玩家1的回合
     state.game_stage = 1;       // 第一阶段
+    state.current_scene = SCENE_BATTLE; // 推入战斗节点
     state.p1.player_id = 1;
     state.p2.player_id = 2;
     state.p1.active_idx = 0;    // 当前出战角色设为队伍第一个（下标0）

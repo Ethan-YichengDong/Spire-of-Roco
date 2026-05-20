@@ -26,4 +26,10 @@ void toggle_is_alive(Character* character);
 // 奖励机制：向玩家的卡组中添加指定ID的新卡片
 void add_reward_to_deck(Player* player, int card_id);
 
+// 战斗重置机制：初始化牌库
+void init_deck(Player* p);
+
+// 无中生有/抽牌骨架机制
+void draw_card(Player* p, int amount);
+
 #endif // DATA_MANAGER_H
