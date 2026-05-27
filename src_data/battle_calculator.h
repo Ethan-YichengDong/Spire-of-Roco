@@ -3,16 +3,16 @@
 
 #include "../game_core.h"
 
-// 管道结算第一段：获取原始面板伤害
+// ===== 三段式伤害结算流水线 =====
+// 第一段：获取原始面板伤害（含攻击力Buff加成）
 int GetRawDamage(Card* card, Character* attacker);
-
-// 管道结算第二段：防御截获与反应增幅（使用攻击者元素属性判定克制）
+// 第二段：元素克制、异常Combo反应与护盾抵扣
 int CalculateMitigation(int raw_damage, Card* card, Character* attacker, Character* target);
-
-// 管道结算第三段：真实扣血与阵亡事件触发器
+// 第三段：真实扣血与阵亡事件触发
 void CommitDamageAndCheck(int final_damage, Character* target);
 
-// 解析并结算本回合双方的行动，更新游戏状态
+// ===== 回合结算主入口 =====
+// 根据速度判定行动次序，结算双方Action，执行回合结束清理
 void ResolveTurn(GameState *state, Action a1, Action a2);
 
 #endif // BATTLE_CALCULATOR_H
