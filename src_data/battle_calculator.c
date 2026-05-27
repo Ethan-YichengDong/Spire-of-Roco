@@ -1,4 +1,5 @@
 #include "battle_calculator.h"
+#include "data_manager.h"
 #include <stdio.h>
 
 // 获取原始面板伤害（三段式流水线第一段）
@@ -59,13 +60,10 @@ int CalculateMitigation(int raw_damage, Card* card, Character* attacker, Charact
 }
 
 // 真实扣血与阵亡事件触发器（三段式流水线第三段）
-// 执行最终生命值扣除，血量归零则标记角色阵亡
+// 执行最终生命值扣除，随后调用toggle_is_alive统一同步存活状态
 void CommitDamageAndCheck(int final_damage, Character* target) {
     target->hp -= final_damage;
-    if (target->hp <= 0) {
-        target->hp = 0;
-        target->is_alive = 0;
-    }
+    toggle_is_alive(target);
 }
 
 // 根据行动目标索引解析实际指向的角色指针
@@ -123,10 +121,8 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
     // 能量不足则放弃本次行动
     if (acting_player->energy < played_card.energy_cost) return;
 
-    // 扣除能量并钳制，防止越界导致UI崩溃
-    acting_player->energy -= played_card.energy_cost;
-    if (acting_player->energy < 0) acting_player->energy = 0;
-    if (acting_player->energy > acting_player->max_energy) acting_player->energy = acting_player->max_energy;
+    // 扣除能量消耗（内部已含钳制逻辑，防止越界）
+    consume_energy(acting_player, played_card.energy_cost);
 
     // 从出战角色实时赋予卡牌元素属性（卡牌本身不绑定固定元素，由使用者决定）
     played_card.element = active_char->element;
@@ -148,11 +144,8 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
         resolve_on_target(&played_card, active_char, target_char);
     }
 
-    // 出手后从手牌中移除此卡（后续手牌前移一位填补空位）
-    for (int i = action.card_hand_idx; i < acting_player->hand_count - 1; i++) {
-        acting_player->hand[i] = acting_player->hand[i + 1];
-    }
-    acting_player->hand_count--;
+    // 出手后将卡牌移入弃牌堆
+    discard_from_hand(acting_player, action.card_hand_idx);
 }
 
 // 每回合结束时，减少角色身上所有Buff的剩余持续回合数
@@ -188,4 +181,12 @@ void ResolveTurn(GameState *state, Action a1, Action a2) {
         decrement_buffs(&state->p1.team[i]);
         decrement_buffs(&state->p2.team[i]);
     }
+
+    // 回合结束时双方能量恢复至上限
+    refill_energy(&state->p1);
+    refill_energy(&state->p2);
+
+    // 回合结束时双方从抽牌堆补满手牌
+    refill_hand(&state->p1);
+    refill_hand(&state->p2);
 }
