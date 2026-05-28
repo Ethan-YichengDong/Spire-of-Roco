@@ -56,17 +56,16 @@ int GetRawDamage(Card* card, Character* attacker) {
 }
 
 // 第二段：元素克制倍率 → 异常Combo反应 → 护盾抵扣
-int CalculateMitigation(int raw_damage, Card* card, Character* attacker, Character* target) {
-    (void)card;
+int CalculateMitigation(int raw_damage, ElementType attack_element, Character* target) {
     int damage = raw_damage;
 
     // 一、元素属性克制：水克火 / 火克草 / 草克水，克制方伤害×2
-    if (attacker->element == ELEMENT_WATER && target->element == ELEMENT_FIRE)      damage *= 2;
-    else if (attacker->element == ELEMENT_FIRE && target->element == ELEMENT_GRASS) damage *= 2;
-    else if (attacker->element == ELEMENT_GRASS && target->element == ELEMENT_WATER) damage *= 2;
+    if (attack_element == ELEMENT_WATER && target->element == ELEMENT_FIRE)      damage *= 2;
+    else if (attack_element == ELEMENT_FIRE && target->element == ELEMENT_GRASS) damage *= 2;
+    else if (attack_element == ELEMENT_GRASS && target->element == ELEMENT_WATER) damage *= 2;
 
     // 二、异常状态Combo：潮湿+电系 → 感电，伤害翻倍
-    if (attacker->element == ELEMENT_ELECTRIC && target->buffs[BUFF_WET] > 0) {
+    if (attack_element == ELEMENT_ELECTRIC && target->buffs[BUFF_WET] > 0) {
         damage *= 2;
     }
 
@@ -92,7 +91,7 @@ void CommitDamageAndCheck(int final_damage, Character* target) {
 }
 
 // ============================================================
-//  行动结算（static，供ResolveTurn调用）
+//  行动结算（static，供ExecuteAction调用）
 // ============================================================
 
 // 对单个目标执行伤害/护盾/治疗/Buff结算
@@ -101,7 +100,7 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
     // 伤害（仅存活目标）
     if (target_char->is_alive && played_card->base_damage > 0) {
         int raw = GetRawDamage(played_card, attacker);
-        int final_dmg = CalculateMitigation(raw, played_card, attacker, target_char);
+        int final_dmg = CalculateMitigation(raw, played_card->element, target_char);
         CommitDamageAndCheck(final_dmg, target_char);
     }
 
@@ -117,9 +116,9 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
         toggle_is_alive(target_char);
     }
 
-    // Buff/Debuff（仅存活目标）
+    // Buff/Debuff（仅存活目标，叠加回合数）
     if (target_char->is_alive && played_card->buff_effect != BUFF_NONE) {
-        target_char->buffs[played_card->buff_effect] = played_card->buff_duration;
+        target_char->buffs[played_card->buff_effect] += played_card->buff_duration + 1;
     }
 }
 
@@ -127,7 +126,7 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
 static void apply_action(Player* acting_player, Player* target_player, Action action) {
     // 切换出战角色
     if (action.type == ACTION_SWITCH_CHAR) {
-        if (action.switch_to_idx >= 0 && action.switch_to_idx < TEAM_SIZE
+        if (action.switch_to_idx >= 0 && action.switch_to_idx < TEAM_SIZE 
             && acting_player->team[action.switch_to_idx].is_alive) {
             acting_player->active_idx = action.switch_to_idx;
         }
@@ -146,11 +145,13 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
     // 扣除能量
     consume_energy(acting_player, played_card.energy_cost);
 
-    // 从出战角色实时赋予元素属性（卡牌本身不绑定固定元素）
-    played_card.element = active_char->element;
-    // 攻击卡：若未指定Buff，则按角色元素赋予默认异常状态
+    // 卡牌元素：若为普通(0)则从出战角色继承，非零则为固定属性卡牌
+    if (played_card.element == ELEMENT_NORMAL) {
+        played_card.element = active_char->element;
+    }
+    // 攻击卡：若未指定Buff，则按卡牌最终属性赋予默认异常状态
     if (played_card.type == CARD_TYPE_ATTACK && played_card.buff_effect == BUFF_NONE) {
-        played_card.buff_effect = get_element_default_buff(active_char->element);
+        played_card.buff_effect = get_element_default_buff(played_card.element);
     }
 
     // 根据卡牌目标类型分发结算
@@ -169,39 +170,26 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
 }
 
 // ============================================================
-//  回合结算主入口（公有接口）
+//  回合结算接口（公有）
 // ============================================================
 
-void ResolveTurn(GameState *state, Action a1, Action a2) {
-    Character* c1 = &state->p1.team[state->p1.active_idx];
-    Character* c2 = &state->p2.team[state->p2.active_idx];
+// 执行单个行动：acting_player_id为1或2，引擎在循环中多次调用直到能量耗尽或主动结束
+void ExecuteAction(GameState* state, Action* action, int acting_player_id) {
+    Player* acting = (acting_player_id == 1) ? &state->p1 : &state->p2;
+    Player* target = (acting_player_id == 1) ? &state->p2 : &state->p1;
+    apply_action(acting, target, *action);
+}
 
-    // 速度高者先手（速度相同时P1先手）
-    if (c1->speed >= c2->speed) {
-        apply_action(&state->p1, &state->p2, a1);
-        if (c2->is_alive) {
-            apply_action(&state->p2, &state->p1, a2);
-        }
-    } else {
-        apply_action(&state->p2, &state->p1, a2);
-        if (c1->is_alive) {
-            apply_action(&state->p1, &state->p2, a1);
-        }
-    }
-
-    // --- 回合结束清理 ---
-    // Buff持续回合-1（护盾除外）
+// 回合结束清理：Buff-1、能量回满、手牌补满、阵亡出战自动切换
+void EndTurn(GameState* state) {
     for (int i = 0; i < TEAM_SIZE; i++) {
         decrement_buffs(&state->p1.team[i]);
         decrement_buffs(&state->p2.team[i]);
     }
-    // 能量回满
     refill_energy(&state->p1);
     refill_energy(&state->p2);
-    // 手牌补满
     refill_hand(&state->p1);
     refill_hand(&state->p2);
-    // 出战角色阵亡则自动切换
     remove_dead_from_team(&state->p1, state->p1.active_idx);
     remove_dead_from_team(&state->p2, state->p2.active_idx);
 }

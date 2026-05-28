@@ -17,10 +17,12 @@ extern int g_char_count;
 void load_game_data(const char* cards_file, const char* chars_file);
 // 战斗重置：清空抽牌堆、弃牌堆和手牌
 void init_deck(Player* p);
+// 从全局角色池按ID选取角色克隆到玩家队伍指定位置
+void assign_character_to_team(Player* p, int char_id, int team_slot);
 
 // ===== 第二阶段：牌组构筑 =====
-// 从全局卡池选取指定ID的卡牌加入玩家抽牌堆
-void add_to_draw_pile(Player* p, int card_id);
+// 从全局卡池按ID列表批量选牌加入抽牌堆，返回成功加入张数
+int build_draw_pile(Player* p, int* card_ids, int count);
 // 对抽牌堆执行Fisher-Yates随机洗牌
 void shuffle_draw_pile(Player* p);
 // 抽牌：从抽牌堆顶部逐张抽入手牌（抽牌堆空时自动将弃牌堆洗入）

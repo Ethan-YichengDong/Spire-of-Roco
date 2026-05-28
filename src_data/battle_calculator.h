@@ -7,12 +7,14 @@
 // 第一段：获取原始面板伤害（含攻击力Buff加成）
 int GetRawDamage(Card* card, Character* attacker);
 // 第二段：元素克制、异常Combo反应与护盾抵扣
-int CalculateMitigation(int raw_damage, Card* card, Character* attacker, Character* target);
+int CalculateMitigation(int raw_damage, ElementType attack_element, Character* target);
 // 第三段：真实扣血与阵亡事件触发
 void CommitDamageAndCheck(int final_damage, Character* target);
 
-// ===== 回合结算主入口 =====
-// 根据速度判定行动次序，结算双方Action，执行回合结束清理
-void ResolveTurn(GameState *state, Action a1, Action a2);
+// ===== 回合结算接口 =====
+// 执行单个行动：acting_player_id为1或2，引擎在循环中多次调用直到能量耗尽或主动结束
+void ExecuteAction(GameState* state, Action* action, int acting_player_id);
+// 回合结束清理：Buff递减、能量回满、手牌补满、阵亡出战切换
+void EndTurn(GameState* state);
 
 #endif // BATTLE_CALCULATOR_H

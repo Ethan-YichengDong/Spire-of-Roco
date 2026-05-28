@@ -61,19 +61,35 @@ void init_deck(Player* p) {
     p->hand_count = 0;
 }
 
+// 从全局角色池按ID选取角色，克隆全部数据到玩家队伍的指定位置(0~TEAM_SIZE-1)
+void assign_character_to_team(Player* p, int char_id, int team_slot) {
+    if (team_slot < 0 || team_slot >= TEAM_SIZE) return;
+    for (int i = 0; i < g_char_count; i++) {
+        if (g_all_characters[i].char_id == char_id) {
+            p->team[team_slot] = g_all_characters[i];
+            break;
+        }
+    }
+}
+
 // ============================================================
 //  第二阶段：牌组构筑
 // ============================================================
 
-// 从全局卡池选取指定ID的卡牌，复制一份加入玩家抽牌堆
-void add_to_draw_pile(Player* p, int card_id) {
-    if (p->draw_count >= MAX_DECK_SIZE) return;
-    for (int i = 0; i < g_card_count; i++) {
-        if (g_all_cards[i].card_id == card_id) {
-            p->draw_pile[p->draw_count++] = g_all_cards[i];
-            break;
+// 按ID列表从全局卡池批量选牌加入抽牌堆，返回成功加入张数
+int build_draw_pile(Player* p, int* card_ids, int count) {
+    int added = 0;
+    for (int i = 0; i < count; i++) {
+        if (p->draw_count >= MAX_DECK_SIZE) break;
+        for (int j = 0; j < g_card_count; j++) {
+            if (g_all_cards[j].card_id == card_ids[i]) {
+                p->draw_pile[p->draw_count++] = g_all_cards[j];
+                added++;
+                break;
+            }
         }
     }
+    return added;
 }
 
 // 对抽牌堆执行Fisher-Yates洗牌算法，打乱卡牌顺序
@@ -187,6 +203,7 @@ void toggle_is_alive(Character* character) {
     if (character->hp <= 0) {
         character->is_alive = 0;
         character->hp = 0;
+        for (int i = 0; i < BUFF_COUNT; i++) character->buffs[i] = 0; // 阵亡清除全部Buff
     } else {
         character->is_alive = 1;
     }
