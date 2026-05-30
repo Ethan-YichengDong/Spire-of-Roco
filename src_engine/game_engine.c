@@ -4,6 +4,62 @@
 #include "../src_data/data_manager.h"
 #include "../src_ai/ai_bridge.h"
 #include <stdio.h>
+#include <string.h>
+
+static Action NormalizeActionForCurrentState(GameState* state, Action action, int actor_id) {
+    Player* acting = (actor_id == 1) ? &state->p1 : &state->p2;
+    Player* target = (actor_id == 1) ? &state->p2 : &state->p1;
+
+    action.actor_id = actor_id;
+
+    if (action.type == ACTION_SWITCH_CHAR) {
+        if (action.switch_to_idx < 0 || action.switch_to_idx >= TEAM_SIZE ||
+            !acting->team[action.switch_to_idx].is_alive) {
+            action.type = ACTION_END_TURN;
+        }
+        return action;
+    }
+
+    if (action.type != ACTION_PLAY_CARD) {
+        return action;
+    }
+
+    if (action.card_hand_idx < 0 || action.card_hand_idx >= acting->hand_count) {
+        action.type = ACTION_END_TURN;
+        return action;
+    }
+
+    Card* card = &acting->hand[action.card_hand_idx];
+    if (card->target_type == TARGET_ENEMY_ALL) {
+        action.target_idx = -1;
+    } else if (card->target_type == TARGET_SELF_ALL) {
+        action.target_idx = -2;
+    } else if (card->target_type == TARGET_SELF_SINGLE) {
+        if (action.target_idx >= 10 && action.target_idx < 10 + TEAM_SIZE) {
+            action.target_idx -= 10;
+        }
+        if (action.target_idx < 0 || action.target_idx >= TEAM_SIZE ||
+            !acting->team[action.target_idx].is_alive) {
+            action.target_idx = acting->active_idx;
+        }
+    } else {
+        if (action.target_idx < 0 || action.target_idx >= TEAM_SIZE ||
+            !target->team[action.target_idx].is_alive) {
+            action.target_idx = target->active_idx;
+        }
+    }
+
+    return action;
+}
+
+static void ResolveTurn(GameState* state, Action a1, Action a2) {
+    a1 = NormalizeActionForCurrentState(state, a1, 1);
+    a2 = NormalizeActionForCurrentState(state, a2, 2);
+
+    ExecuteAction(state, &a1, 1);
+    ExecuteAction(state, &a2, 2);
+    EndTurn(state);
+}
 
 // 获取玩家2的行动，基于选择的游戏模式
 Action GetPlayer2Action(GameState state, int mode) {
@@ -19,6 +75,8 @@ Action GetPlayer2Action(GameState state, int mode) {
 // 执行并管理游戏核心循环
 void RunGameLoop() {
     GameState state;
+    memset(&state, 0, sizeof(state));
+
     // 初始化基本状态
     state.round_count = 1;      // 当前回合数初始化
     state.current_turn = 1;     // 设置为玩家1的回合
@@ -29,17 +87,21 @@ void RunGameLoop() {
     state.p1.active_idx = 0;    // 当前出战角色设为队伍第一个（下标0）
     state.p2.active_idx = 0;
     
-    // 如果有读取到角色数据，为双方分配首发角色
-    if (g_char_count > 1) {
-        state.p1.team[0] = g_all_characters[0];
-        state.p2.team[0] = g_all_characters[1];
+    // 如果有读取到角色数据，为双方分配测试队伍
+    if (g_char_count > 0) {
+        for (int i = 0; i < TEAM_SIZE; i++) {
+            state.p1.team[i] = g_all_characters[i % g_char_count];
+            state.p2.team[i] = g_all_characters[(i + 1) % g_char_count];
+        }
     }
     
     // 初始化双方的初始手牌信息和能量池
+    state.p1.max_energy = 3;
+    state.p2.max_energy = 3;
     state.p1.energy = 3;
     state.p2.energy = 3;
-    state.p1.hand_count = 0;
-    state.p2.hand_count = 0;
+    init_deck(&state.p1);
+    init_deck(&state.p2);
     
     // 赋予双方手牌中的第一张卡（测试逻辑）
     if (g_card_count > 0) {
