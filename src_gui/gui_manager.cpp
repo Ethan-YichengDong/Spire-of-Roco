@@ -66,3 +66,37 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     printf("[GUI] GetHumanInputFromUI: 正在为玩家 %d 解析默认的卡牌行动交互动作\n", player_id);
     return act;
 }
+
+// 角色选择阶段：让玩家从全局角色池中为队伍槽位选择角色
+// 返回值是选中的角色在g_all_characters中的索引
+int SelectCharacterFromUI(int player_id, int slot_number) {
+    // 占位逻辑：按默认顺序分配，后续由GUI同学替换为实际的选择界面
+    // P1默认选择前三个角色(0:Squirtle, 1:Charmander, 2:Bulbasaur)
+    // P2默认选择(3:Pikachu, 0:Squirtle, 1:Charmander)
+    printf("[GUI] SelectCharacterFromUI: 玩家 %d 正在为槽位 %d 选择角色\n", player_id, slot_number);
+    if (player_id == 1) {
+        int defaults[] = {0, 1, 2};
+        return defaults[slot_number];
+    } else {
+        int defaults[] = {3, 0, 1};
+        return defaults[slot_number];
+    }
+}
+
+// 卡牌选择阶段：让玩家从全局卡牌池中为牌库逐张挑选卡牌
+// 返回选中的卡牌在g_all_cards中的索引，返回-1表示结束选择
+int SelectCardFromUI(int player_id, int current_deck_size) {
+    // 占位逻辑：自动按顺序加入每种卡牌2张（共16张），后续由GUI同学替换为实际选择界面
+    printf("[GUI] SelectCardFromUI: 玩家 %d 正在选择第 %d 张卡牌\n", player_id, current_deck_size + 1);
+    // 默认构筑：8种卡各2张，选满16张后自动结束
+    if (current_deck_size >= 16) return -1;
+    // 每种卡牌2张：索引按0,0,1,1,2,2,...排列
+    return (current_deck_size / 2) % 8;
+}
+
+// 主菜单阶段：获取玩家的游戏模式选择，返回MODE_PVP或MODE_PVE
+int GetModeSelectionFromUI() {
+    // 占位逻辑：默认返回本地PvP模式，后续由GUI同学替换为实际菜单选择界面
+    printf("[GUI] GetModeSelectionFromUI: 当前默认选择 本地PvP模式\n");
+    return MODE_PVP;
+}

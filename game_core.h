@@ -21,6 +21,10 @@ typedef enum { TARGET_ENEMY_SINGLE = 0, TARGET_ENEMY_ALL, TARGET_SELF_SINGLE, TA
 // 全局游戏状态所属的场景节点
 typedef enum { SCENE_MENU = 0, SCENE_DRAFT, SCENE_BATTLE, SCENE_RESULT } AppScene;
 
+// 游戏模式常量
+#define MODE_PVP 0   // 本地双人对战，P2由人工输入
+#define MODE_PVE 1   // 人机对战，P2通过Socket桥接调用AI后端
+
 // 卡牌结构体定义
 typedef struct {
     int card_id;                // 卡牌ID
