@@ -7,13 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#ifdef _WIN32
 #include <direct.h>
-#else
-#include <sys/stat.h>
-#include <sys/types.h>
-#endif
 
 static FILE* g_battle_log = NULL;
 
@@ -39,11 +33,7 @@ static const char* ActionName(ActionType type) {
 }
 
 static void EnsureLogDirExists(void) {
-#ifdef _WIN32
     _mkdir("logs");
-#else
-    mkdir("logs", 0755);
-#endif
 }
 
 static void OpenBattleLog(void) {

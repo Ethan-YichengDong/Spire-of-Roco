@@ -49,5 +49,5 @@
 请 Agent 严格遵照项目MVC模型指派文件去处，不可随意写在不同的文件里：
 1. **纯数值增减、伤害计算、特殊卡逻辑分配** ➡️ 填入 `src_data/battle_calculator.c`。
 2. **洗牌、卡池操作、外存读取、掉落获取** ➡️ 填入 `src_data/data_manager.c`。
-3. **主界面的UI绘制、警告弹窗、颜色、终端提示** ➡️ 填入 `src_gui/gui_manager.cpp` / `mac_cli_manager.cpp`。
+3. **主界面的UI绘制、警告弹窗、颜色、终端提示** ➡️ 填入 `src_gui/gui_manager.cpp` / `windows_cli_manager.cpp`。
 4. **游戏流程循环控制、玩家/AI回合轮询** ➡️ 填入 `src_engine/game_engine.c`。

@@ -5,13 +5,60 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <limits.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <sys/time.h>
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#ifdef _MSC_VER
+#pragma comment(lib, "Ws2_32.lib")
+#endif
 
 #define AI_BUFFER_SIZE 16384
 #define AI_PORT 8888
+#define AI_SOCKET_TIMEOUT_MS 1000
+
+typedef SOCKET RocoSocket;
+
+static void cleanup_winsock(void) {
+    WSACleanup();
+}
+
+static int ensure_winsock_started(void) {
+    static int started = 0;
+
+    if (started) return 0;
+
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        return -1;
+    }
+
+    atexit(cleanup_winsock);
+    started = 1;
+    return 0;
+}
+
+static void close_ai_socket(RocoSocket sock) {
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
+    }
+}
+
+static int set_ai_socket_timeout(RocoSocket sock, DWORD timeout_ms) {
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR) {
+        return -1;
+    }
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms)) == SOCKET_ERROR) {
+        return -1;
+    }
+    return 0;
+}
 
 // 追加格式化文本到固定大小缓冲区，避免 sprintf 造成越界风险
 static void append_fmt(char* buffer, size_t buffer_size, size_t* offset, const char* fmt, ...) {
@@ -186,11 +233,13 @@ static int parse_json_int(const char* json, const char* key, int* value) {
     return 1;
 }
 
-static int send_all(int sock, const char* data, size_t len) {
+static int send_all(RocoSocket sock, const char* data, size_t len) {
     size_t sent_total = 0;
     while (sent_total < len) {
-        ssize_t sent = send(sock, data + sent_total, len - sent_total, 0);
-        if (sent <= 0) return -1;
+        size_t remaining = len - sent_total;
+        int chunk_size = (remaining > (size_t)INT_MAX) ? INT_MAX : (int)remaining;
+        int sent = send(sock, data + sent_total, chunk_size, 0);
+        if (sent == SOCKET_ERROR || sent == 0) return -1;
         sent_total += (size_t)sent;
     }
     return 0;
@@ -309,7 +358,7 @@ static void SerializeGameState(GameState state, int ai_player_id, char* buffer, 
 
 // 主入口函数：通过本机的 Socket 通信端口请求外部的 Python AI 的决策
 Action GetAIActionFromBackend(GameState state, int ai_player_id) {
-    int sock = 0;
+    RocoSocket sock = INVALID_SOCKET;
     struct sockaddr_in serv_addr;
     char buffer[AI_BUFFER_SIZE] = {0};
     char json_payload[AI_BUFFER_SIZE] = {0};
@@ -317,17 +366,25 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
     // 序列化当前的桌面状态作为发送体 payload
     SerializeGameState(state, ai_player_id, json_payload, sizeof(json_payload));
 
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    if (ensure_winsock_started() < 0) {
+        printf("[AI Bridge] Winsock 初始化失败。\n");
+        return FallbackAI(state, ai_player_id);
+    }
+
+    memset(&serv_addr, 0, sizeof(serv_addr));
+
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
         printf("[AI Bridge] Socket 建立失败。\n");
         return FallbackAI(state, ai_player_id);
     }
 
     // 设置 1 秒的通信超时机制，防止 Python 服务端未启动导致整个游戏 C 进程被锁死
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
+    if (set_ai_socket_timeout(sock, AI_SOCKET_TIMEOUT_MS) < 0) {
+        printf("[AI Bridge] Socket 超时设置失败。\n");
+        close_ai_socket(sock);
+        return FallbackAI(state, ai_player_id);
+    }
 
     serv_addr.sin_family = AF_INET;
     // 规定 Python 后端挂载的端口
@@ -335,27 +392,27 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
 
     // 连接本机地址 127.0.0.1
     if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-        close(sock);
+        close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
 
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+    if (connect(sock, (struct sockaddr *)&serv_addr, (int)sizeof(serv_addr)) == SOCKET_ERROR) {
         printf("[AI Bridge] 连接至 Python AI 后端失败。\n");
-        close(sock);
+        close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
 
     // 发送游戏当前状态
     if (send_all(sock, json_payload, strlen(json_payload)) < 0) {
         printf("[AI Bridge] 发送 Socket 消息失败。\n");
-        close(sock);
+        close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
-    shutdown(sock, SHUT_WR);
+    shutdown(sock, SD_SEND);
 
     // 阻塞并在 1 秒内等待返回决策结果
-    int valread = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    close(sock);
+    int valread = recv(sock, buffer, (int)sizeof(buffer) - 1, 0);
+    close_ai_socket(sock);
 
     // 处理通信超时或接收失败的场景
     if (valread <= 0) {

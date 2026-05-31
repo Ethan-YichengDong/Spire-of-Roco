@@ -32,26 +32,29 @@
 
 启动本地 AI 后端：
 
-```bash
-ROCO_AI_POLICY=hard python3 -B src_ai/ai_backend/main.py
+```bat
+set ROCO_AI_POLICY=hard
+py -3 -B src_ai\ai_backend\main.py
 ```
 
 运行无 EasyX 的 PvE 冒烟：
 
-```bash
-ROCO_GAME_MODE=1 ROCO_SMOKE_MAX_ROUNDS=1 ./run_smoketest_without_EasyX.sh
+```bat
+set ROCO_GAME_MODE=1
+set ROCO_SMOKE_MAX_ROUNDS=1
+run_smoketest_without_EasyX.bat
 ```
 
 运行 AI 评测：
 
-```bash
-python3 -B src_ai/ai_backend/evaluate.py --matches 20 --p1-policy random --p2-policy hard
+```bat
+py -3 -B src_ai\ai_backend\evaluate.py --matches 20 --p1-policy random --p2-policy hard
 ```
 
 生成 AI 选角/构筑推荐：
 
-```bash
-python3 -B src_ai/ai_backend/draft_planner.py --style aggressive --deck-size 16
+```bat
+py -3 -B src_ai\ai_backend\draft_planner.py --style aggressive --deck-size 16
 ```
 
 可用 AI 策略包括：
