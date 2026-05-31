@@ -40,6 +40,8 @@ DEFAULT_LLM_MODEL = "Qwen3.5-4B"
 DEFAULT_LLM_TIMEOUT = 5.0
 DEFAULT_LLM_MAX_TOKENS = 256
 DEFAULT_LLM_TEMPERATURE = 0.0
+DEFAULT_LLM_CANDIDATE_LIMIT = 8
+DEFAULT_LLM_STRICT_ACTION_ID = True
 
 
 def _end_turn(reason: str) -> dict:
@@ -636,26 +638,15 @@ def _hard_policy_bonus(action: dict, state_dict: dict, base_score: float) -> flo
 
 
 def _choose_scored_action(state_dict: dict, difficulty: str) -> dict:
-    legal_actions = generate_legal_actions(state_dict)
-    players = state_dict.get("players", {})
-    player = players.get("self", {}) if isinstance(players, dict) else {}
+    ranked_actions = rank_legal_actions(state_dict, difficulty)
+    legal_actions = [item["action"] for item in ranked_actions]
+    if not legal_actions:
+        return _end_turn(f"{difficulty}_no_legal_action")
 
-    best_action = None
-    best_score = 0.0
-    for action in legal_actions:
-        action_type = _safe_int(action.get("type"), ACTION_NONE)
-        if action_type == ACTION_PLAY_CARD:
-            score = _score_play_action(action, state_dict, difficulty)
-        elif action_type == ACTION_SWITCH_CHAR:
-            score = _score_switch_action(action, player, difficulty)
-        else:
-            score = 0.0
-
-        if best_action is None or score > best_score:
-            best_action = action
-            best_score = score
-
-    if best_action is None or best_score <= 0:
+    best = ranked_actions[0]
+    best_action = best["action"]
+    best_score = best["score"]
+    if best_score <= 0:
         return select_legal_action(
             {"action_id": "end", "debug_reason": f"{difficulty}_no_profitable_action"},
             state_dict,
@@ -665,6 +656,27 @@ def _choose_scored_action(state_dict: dict, difficulty: str) -> dict:
     selected = dict(best_action)
     selected["debug_reason"] = f"{difficulty}_score:{best_score:.2f}"
     return selected
+
+
+def rank_legal_actions(state_dict: dict, difficulty: str = "normal") -> list[dict]:
+    legal_actions = generate_legal_actions(state_dict)
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+
+    ranked = []
+    for action in legal_actions:
+        action_type = _safe_int(action.get("type"), ACTION_NONE)
+        if action_type == ACTION_PLAY_CARD:
+            score = _score_play_action(action, state_dict, difficulty)
+        elif action_type == ACTION_SWITCH_CHAR:
+            score = _score_switch_action(action, player, difficulty)
+        else:
+            score = 0.0
+
+        ranked.append({"score": float(score), "action": dict(action)})
+
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return ranked
 
 
 def _score_switch(player: dict) -> tuple:
@@ -762,6 +774,13 @@ def _read_int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _read_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
@@ -869,8 +888,68 @@ def _legal_actions_for_prompt(legal_actions: list, state_dict: dict) -> list:
     ]
 
 
+def _character_summary(character: dict) -> dict:
+    return {
+        "idx": character.get("index"),
+        "name": character.get("name"),
+        "hp": character.get("hp"),
+        "max_hp": character.get("max_hp"),
+        "element": character.get("element"),
+        "alive": character.get("is_alive"),
+        "buffs": character.get("buffs", []),
+    }
+
+
+def _player_summary(player: dict) -> dict:
+    active = _active_character(player)
+    return {
+        "player_id": player.get("player_id"),
+        "active_idx": player.get("active_idx"),
+        "energy": player.get("energy"),
+        "hand_count": player.get("hand_count"),
+        "active": _character_summary(active),
+        "team": [_character_summary(member) for member in _team(player)],
+        "hand": [
+            {
+                "hand_idx": card.get("hand_idx"),
+                "name": card.get("name"),
+                "cost": card.get("energy_cost"),
+                "damage": card.get("base_damage"),
+                "defense": card.get("base_defense"),
+                "heal": card.get("base_heal"),
+                "buff": card.get("buff_effect"),
+                "target_type": card.get("target_type"),
+            }
+            for card in _hand(player)
+        ],
+    }
+
+
+def _state_summary_for_prompt(state_dict: dict) -> dict:
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+    opponent = players.get("opponent", {}) if isinstance(players, dict) else {}
+    return {
+        "round_count": state_dict.get("round_count"),
+        "current_turn": state_dict.get("current_turn"),
+        "self": _player_summary(player),
+        "opponent": _player_summary(opponent),
+    }
+
+
+def _limited_legal_actions_for_llm(state_dict: dict, difficulty: str = "hard") -> list:
+    limit = max(1, _read_int_env("ROCO_LLM_CANDIDATE_LIMIT", DEFAULT_LLM_CANDIDATE_LIMIT))
+    ranked = rank_legal_actions(state_dict, difficulty)
+    top_actions = [item["action"] for item in ranked[:limit]]
+    if not any(action.get("action_id") == "end" for action in top_actions):
+        end_action = select_legal_action({"action_id": "end"}, state_dict, [item["action"] for item in ranked])
+        if end_action is not None:
+            top_actions.append(end_action)
+    return top_actions
+
+
 def _build_llm_prompt(state_dict: dict, heuristic_action: dict, legal_actions: list) -> str:
-    compact_state = json.dumps(state_dict, ensure_ascii=False, separators=(",", ":"))
+    compact_summary = json.dumps(_state_summary_for_prompt(state_dict), ensure_ascii=False, separators=(",", ":"))
     compact_fallback = json.dumps(heuristic_action, ensure_ascii=False, separators=(",", ":"))
     compact_legal_actions = json.dumps(
         _legal_actions_for_prompt(legal_actions, state_dict),
@@ -892,11 +971,8 @@ def _build_llm_prompt(state_dict: dict, heuristic_action: dict, legal_actions: l
 - 敌方全体: -1
 - 己方全体: -2
 
-只允许从合法动作列表中选择动作。推荐只输出:
+只允许从合法动作列表中选择动作。你只能输出:
 {{"action_id": str, "debug_reason": str}}
-
-也可以输出完整动作 JSON，但它必须与合法动作列表中的某一项完全匹配。完整 JSON 字段为:
-{{"type": int, "card_hand_idx": int, "switch_to_idx": int, "target_idx": int, "debug_reason": str}}
 
 如果无法判断，请返回这个启发式兜底动作:
 {compact_fallback}
@@ -904,20 +980,24 @@ def _build_llm_prompt(state_dict: dict, heuristic_action: dict, legal_actions: l
 合法动作列表:
 {compact_legal_actions}
 
-当前状态:
-{compact_state}
+当前局势摘要:
+{compact_summary}
 """.strip()
 
 
 def process_game_state_llm(state_dict: dict) -> dict:
-    legal_actions = generate_legal_actions(state_dict)
-    heuristic_action = process_game_state_heuristic(state_dict)
+    legal_actions = _limited_legal_actions_for_llm(state_dict, "hard")
+    heuristic_action = process_game_state_hard(state_dict)
     prompt = _build_llm_prompt(state_dict, heuristic_action, legal_actions)
 
     try:
         llm_action = query_llm(prompt)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as exc:
         heuristic_action["debug_reason"] = f"llm_fallback:{type(exc).__name__}"
+        return heuristic_action
+
+    if _read_bool_env("ROCO_LLM_STRICT_ACTION_ID", DEFAULT_LLM_STRICT_ACTION_ID) and "action_id" not in llm_action:
+        heuristic_action["debug_reason"] = "llm_fallback:missing_action_id"
         return heuristic_action
 
     selected = select_legal_action(llm_action, state_dict, legal_actions)
@@ -929,6 +1009,30 @@ def process_game_state_llm(state_dict: dict) -> dict:
     return selected
 
 
+def process_game_state_hybrid(state_dict: dict) -> dict:
+    candidate_actions = _limited_legal_actions_for_llm(state_dict, "hard")
+    fallback_action = process_game_state_hard(state_dict)
+    prompt = _build_llm_prompt(state_dict, fallback_action, candidate_actions)
+
+    try:
+        llm_action = query_llm(prompt)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as exc:
+        fallback_action["debug_reason"] = f"hybrid_fallback:{type(exc).__name__}"
+        return fallback_action
+
+    if "action_id" not in llm_action:
+        fallback_action["debug_reason"] = "hybrid_fallback:missing_action_id"
+        return fallback_action
+
+    selected = select_legal_action(llm_action, state_dict, candidate_actions)
+    if selected is None:
+        fallback_action["debug_reason"] = "hybrid_fallback:invalid_action"
+        return fallback_action
+
+    selected["debug_reason"] = str(llm_action.get("debug_reason", selected.get("debug_reason", "hybrid_action")))
+    return selected
+
+
 def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
     selected_policy = (policy or os.getenv("ROCO_AI_POLICY", DEFAULT_AI_POLICY)).strip().lower()
 
@@ -937,6 +1041,9 @@ def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
 
     if selected_policy in ("hard", "expert"):
         return process_game_state_hard(state_dict)
+
+    if selected_policy in ("hybrid", "llm_hybrid"):
+        return process_game_state_hybrid(state_dict)
 
     if selected_policy in ("llm", "ollama", "model"):
         return process_game_state_llm(state_dict)

@@ -164,6 +164,23 @@ class AgentLegalActionTests(unittest.TestCase):
         self.assertEqual(action["target_idx"], -1)
         self.assertEqual(action["debug_reason"], "test_llm_choice")
 
+    def test_llm_policy_requires_action_id_by_default(self):
+        original_query_llm = agent.query_llm
+        agent.query_llm = lambda prompt: {
+            "type": agent.ACTION_PLAY_CARD,
+            "card_hand_idx": 1,
+            "switch_to_idx": -1,
+            "target_idx": -1,
+            "debug_reason": "full_action_without_id",
+        }
+
+        try:
+            action = agent.process_game_state_llm(make_state())
+        finally:
+            agent.query_llm = original_query_llm
+
+        self.assertEqual(action["debug_reason"], "llm_fallback:missing_action_id")
+
     def test_llm_policy_falls_back_when_action_id_is_illegal(self):
         original_query_llm = agent.query_llm
         agent.query_llm = lambda prompt: {"action_id": "play:4:0", "debug_reason": "illegal_expensive_card"}
@@ -175,6 +192,18 @@ class AgentLegalActionTests(unittest.TestCase):
 
         self.assertEqual(action["action_id"], "play:0:2")
         self.assertEqual(action["debug_reason"], "llm_fallback:invalid_action")
+
+    def test_hybrid_policy_uses_llm_action_id(self):
+        original_query_llm = agent.query_llm
+        agent.query_llm = lambda prompt: {"action_id": "play:1:-1", "debug_reason": "hybrid_choice"}
+
+        try:
+            action = agent.process_game_state(make_state(), policy="hybrid")
+        finally:
+            agent.query_llm = original_query_llm
+
+        self.assertEqual(action["action_id"], "play:1:-1")
+        self.assertEqual(action["debug_reason"], "hybrid_choice")
 
 
 if __name__ == "__main__":
