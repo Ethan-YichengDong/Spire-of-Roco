@@ -136,6 +136,21 @@ class AgentLegalActionTests(unittest.TestCase):
         self.assertEqual(action["type"], agent.ACTION_PLAY_CARD)
         self.assertEqual(action["target_idx"], 2)
 
+    def test_difficulty_policies_return_legal_actions(self):
+        state = make_state()
+        for policy in ("easy", "normal", "hard"):
+            with self.subTest(policy=policy):
+                action = agent.process_game_state(state, policy=policy)
+                selected = agent.select_legal_action(action, state)
+                self.assertIsNotNone(selected)
+                self.assertEqual(action["action_id"], selected["action_id"])
+
+    def test_hard_policy_keeps_kill_priority(self):
+        action = agent.process_game_state(make_attack_state(), policy="hard")
+
+        self.assertEqual(action["action_id"], "play:0:2")
+        self.assertTrue(action["debug_reason"].startswith("hard_score:"))
+
     def test_llm_policy_can_select_by_action_id(self):
         original_query_llm = agent.query_llm
         agent.query_llm = lambda prompt: {"action_id": "play:1:-1", "debug_reason": "test_llm_choice"}

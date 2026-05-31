@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import urllib.error
 import urllib.request
 
@@ -485,6 +486,187 @@ def _score_card(card: dict, player: dict, opponent: dict) -> tuple:
     return 0.0, 0
 
 
+def _enemy_single_action_score(card: dict, attacker: dict, opponent: dict, target_idx: int) -> float:
+    target = None
+    for member in _alive_members(opponent):
+        if _team_index(member) == target_idx:
+            target = member
+            break
+    if target is None:
+        return 0.0
+
+    damage = _estimate_damage(card, attacker, target)
+    score = float(damage)
+    if int(card.get("base_damage", 0)) > 0 and damage >= int(target.get("hp", 0)):
+        score += 80.0
+        score -= max(0, damage - int(target.get("hp", 0))) * 0.15
+    if target_idx == _safe_int(opponent.get("active_idx"), 0):
+        score += 6.0
+    if _safe_int(card.get("buff_effect"), BUFF_NONE) != BUFF_NONE and _safe_int(card.get("base_damage"), 0) == 0:
+        score += 8.0
+    return score
+
+
+def _self_single_action_score(card: dict, player: dict, protocol_target_idx: int) -> float:
+    target_idx = protocol_target_idx - 10 if protocol_target_idx >= 10 else protocol_target_idx
+    target = None
+    for fallback_idx, member in _indexed_team(player):
+        if _team_index(member, fallback_idx) == target_idx:
+            target = member
+            break
+    if target is None or not _alive(target):
+        return 0.0
+
+    active_idx = _safe_int(player.get("active_idx"), 0)
+    score = 0.0
+    heal = _safe_int(card.get("base_heal"), 0)
+    if heal > 0:
+        missing = max(0, _safe_int(target.get("max_hp"), 0) - _safe_int(target.get("hp"), 0))
+        score += min(heal, missing) * 1.7
+
+    defense = _safe_int(card.get("base_defense"), 0)
+    if defense > 0:
+        low_hp_bonus = 1.0 + max(0.0, 0.65 - _hp_ratio(target))
+        active_bonus = 1.25 if target_idx == active_idx else 0.8
+        score += defense * low_hp_bonus * active_bonus
+
+    if _safe_int(card.get("buff_effect"), BUFF_NONE) == BUFF_POWER:
+        if target_idx == active_idx:
+            score += 18.0 if _buff(target, BUFF_POWER) == 0 else 6.0
+        else:
+            score += 5.0
+
+    return score
+
+
+def _score_play_action(action: dict, state_dict: dict, difficulty: str) -> float:
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+    opponent = players.get("opponent", {}) if isinstance(players, dict) else {}
+    card = _find_card_by_hand_idx(player, _safe_int(action.get("card_hand_idx"), -1))
+    if card is None:
+        return 0.0
+
+    target_idx = _safe_int(action.get("target_idx"), 0)
+    target_type = _safe_int(card.get("target_type"), TARGET_ENEMY_SINGLE)
+    attacker = _active_character(player)
+
+    if target_type == TARGET_ENEMY_SINGLE:
+        score = _enemy_single_action_score(card, attacker, opponent, target_idx)
+    elif target_type == TARGET_ENEMY_ALL:
+        score, _ = _enemy_all_score(card, attacker, opponent)
+    elif target_type == TARGET_SELF_SINGLE:
+        score = _self_single_action_score(card, player, target_idx)
+    elif target_type == TARGET_SELF_ALL:
+        score, _ = _self_all_score(card, player)
+    else:
+        score = 0.0
+
+    cost = max(1, _safe_int(card.get("energy_cost"), 1))
+    score += 1.0 / cost
+
+    if difficulty == "hard":
+        score += _hard_policy_bonus(action, state_dict, base_score=score)
+
+    return score
+
+
+def _score_switch_action(action: dict, player: dict, difficulty: str) -> float:
+    switch_score, switch_idx = _score_switch(player)
+    if switch_idx != _safe_int(action.get("switch_to_idx"), -1):
+        return 0.0
+    if difficulty == "hard":
+        switch_score += 2.0
+    return switch_score
+
+
+def _best_followup_card_score(action: dict, state_dict: dict) -> float:
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+    opponent = players.get("opponent", {}) if isinstance(players, dict) else {}
+    played_idx = _safe_int(action.get("card_hand_idx"), -1)
+    played_card = _find_card_by_hand_idx(player, played_idx)
+    if played_card is None:
+        return 0.0
+
+    remaining_energy = _safe_int(player.get("energy"), 0) - _safe_int(played_card.get("energy_cost"), 0)
+    if remaining_energy <= 0:
+        return 0.0
+
+    best = 0.0
+    attacker = _active_character(player)
+    for fallback_idx, card in enumerate(_hand(player)):
+        hand_idx = _card_hand_idx(card, fallback_idx)
+        if hand_idx == played_idx or _safe_int(card.get("energy_cost"), 0) > remaining_energy:
+            continue
+        score, _ = _score_card(card, player, opponent)
+        if _safe_int(card.get("target_type"), TARGET_ENEMY_SINGLE) == TARGET_ENEMY_SINGLE:
+            score, _ = _enemy_single_score(card, attacker, opponent)
+        best = max(best, float(score))
+    return best
+
+
+def _hard_policy_bonus(action: dict, state_dict: dict, base_score: float) -> float:
+    if _safe_int(action.get("type"), ACTION_NONE) != ACTION_PLAY_CARD:
+        return 0.0
+
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+    card = _find_card_by_hand_idx(player, _safe_int(action.get("card_hand_idx"), -1))
+    if card is None:
+        return 0.0
+
+    bonus = 0.0
+    cost = max(1, _safe_int(card.get("energy_cost"), 1))
+    bonus += min(4.0, base_score / cost * 0.05)
+    bonus += _best_followup_card_score(action, state_dict) * 0.18
+
+    if _safe_int(card.get("buff_effect"), BUFF_NONE) == BUFF_POWER:
+        affordable_attacks = 0
+        remaining_energy = _safe_int(player.get("energy"), 0) - _safe_int(card.get("energy_cost"), 0)
+        for hand_card in _hand(player):
+            if (
+                _safe_int(hand_card.get("type"), CARD_TYPE_SKILL) == CARD_TYPE_ATTACK
+                and _safe_int(hand_card.get("energy_cost"), 0) <= max(0, remaining_energy)
+            ):
+                affordable_attacks += 1
+        bonus += min(6.0, affordable_attacks * 3.0)
+
+    return bonus
+
+
+def _choose_scored_action(state_dict: dict, difficulty: str) -> dict:
+    legal_actions = generate_legal_actions(state_dict)
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+
+    best_action = None
+    best_score = 0.0
+    for action in legal_actions:
+        action_type = _safe_int(action.get("type"), ACTION_NONE)
+        if action_type == ACTION_PLAY_CARD:
+            score = _score_play_action(action, state_dict, difficulty)
+        elif action_type == ACTION_SWITCH_CHAR:
+            score = _score_switch_action(action, player, difficulty)
+        else:
+            score = 0.0
+
+        if best_action is None or score > best_score:
+            best_action = action
+            best_score = score
+
+    if best_action is None or best_score <= 0:
+        return select_legal_action(
+            {"action_id": "end", "debug_reason": f"{difficulty}_no_profitable_action"},
+            state_dict,
+            legal_actions,
+        ) or _end_turn(f"{difficulty}_no_profitable_action")
+
+    selected = dict(best_action)
+    selected["debug_reason"] = f"{difficulty}_score:{best_score:.2f}"
+    return selected
+
+
 def _score_switch(player: dict) -> tuple:
     active = _active_character(player)
     if not active:
@@ -521,63 +703,27 @@ def process_game_state_heuristic(state_dict: dict) -> dict:
     if not isinstance(players, dict):
         return _legacy_decision(state_dict)
 
+    return _choose_scored_action(state_dict, "normal")
+
+
+def process_game_state_hard(state_dict: dict) -> dict:
+    players = state_dict.get("players")
+    if not isinstance(players, dict):
+        return _legacy_decision(state_dict)
+    return _choose_scored_action(state_dict, "hard")
+
+
+def process_game_state_easy(state_dict: dict) -> dict:
     legal_actions = generate_legal_actions(state_dict)
-    player = players.get("self", {})
-    opponent = players.get("opponent", {})
-    energy = int(player.get("energy", 0))
+    candidates = [action for action in legal_actions if action.get("type") != ACTION_END_TURN]
+    if not candidates:
+        return legal_actions[-1] if legal_actions else _end_turn("easy_no_action")
 
-    best_score, switch_idx = _score_switch(player)
-    best_action = None
-    if switch_idx >= 0:
-        best_action = select_legal_action(
-            {
-                "type": ACTION_SWITCH_CHAR,
-                "card_hand_idx": -1,
-                "switch_to_idx": switch_idx,
-                "target_idx": 0,
-                "debug_reason": "switch_to_healthier_character",
-            },
-            state_dict,
-            legal_actions,
-        )
-
-    for card in player.get("hand", []):
-        cost = int(card.get("energy_cost", 0))
-        if cost > energy:
-            continue
-
-        score, target_idx = _score_card(card, player, opponent)
-        if score <= 0:
-            continue
-
-        # Slightly prefer efficient low-cost cards when scores are close.
-        score += 1.0 / max(1, cost)
-        legal_candidate = select_legal_action(
-            {
-                "type": ACTION_PLAY_CARD,
-                "card_hand_idx": int(card.get("hand_idx", 0)),
-                "switch_to_idx": -1,
-                "target_idx": target_idx,
-                "debug_reason": f"play_{card.get('name', 'card')}",
-            },
-            state_dict,
-            legal_actions,
-        )
-        if legal_candidate is None:
-            continue
-
-        if best_action is None or score > best_score:
-            best_score = score
-            best_action = legal_candidate
-
-    if best_action is None:
-        return select_legal_action(
-            {"action_id": "end", "debug_reason": "no_profitable_action"},
-            state_dict,
-            legal_actions,
-        ) or _end_turn("no_profitable_action")
-
-    return best_action
+    seed = os.getenv("ROCO_AI_RANDOM_SEED")
+    rng = random.Random(int(seed)) if seed and seed.isdigit() else random
+    action = dict(rng.choice(candidates))
+    action["debug_reason"] = "easy_random_legal_action"
+    return action
 
 
 def _extract_json_object(text: str) -> dict:
@@ -786,10 +932,16 @@ def process_game_state_llm(state_dict: dict) -> dict:
 def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
     selected_policy = (policy or os.getenv("ROCO_AI_POLICY", DEFAULT_AI_POLICY)).strip().lower()
 
+    if selected_policy in ("easy", "casual"):
+        return process_game_state_easy(state_dict)
+
+    if selected_policy in ("hard", "expert"):
+        return process_game_state_hard(state_dict)
+
     if selected_policy in ("llm", "ollama", "model"):
         return process_game_state_llm(state_dict)
 
-    if selected_policy not in ("heuristic", "rule", "rules"):
+    if selected_policy not in ("heuristic", "normal", "rule", "rules"):
         fallback = process_game_state_heuristic(state_dict)
         fallback["debug_reason"] = f"unknown_policy:{selected_policy}"
         return fallback
