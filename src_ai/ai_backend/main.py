@@ -2,8 +2,10 @@ import socket
 import json
 import os
 from agent import append_decision_log, process_game_state
+from opponent_model import OpponentModel
 
 BUFFER_SIZE = 16384
+OPPONENT_MODEL = OpponentModel()
 
 
 def receive_payload(conn: socket.socket) -> bytes:
@@ -53,6 +55,7 @@ def start_server():
                 try:
                     payload = data.decode('utf-8')
                     state_dict = json.loads(payload)
+                    state_dict["opponent_model"] = OPPONENT_MODEL.update(state_dict)
                     print(f"接收到新的游戏对战状态: {state_dict}")
                     
                     # 经过特定的逻辑处理模块（或大型模型）进行决策生成

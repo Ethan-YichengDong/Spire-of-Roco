@@ -638,7 +638,32 @@ def _hard_policy_bonus(action: dict, state_dict: dict, base_score: float) -> flo
                 affordable_attacks += 1
         bonus += min(6.0, affordable_attacks * 3.0)
 
+    bonus += _opponent_model_bonus(card, state_dict)
     return bonus
+
+
+def _opponent_model_bonus(card: dict, state_dict: dict) -> float:
+    model = state_dict.get("opponent_model", {})
+    if not isinstance(model, dict):
+        return 0.0
+
+    style = str(model.get("estimated_style", "balanced"))
+    target_type = _safe_int(card.get("target_type"), TARGET_ENEMY_SINGLE)
+    is_self_target = target_type in (TARGET_SELF_SINGLE, TARGET_SELF_ALL)
+    is_attack = _safe_int(card.get("base_damage"), 0) > 0
+    is_defense = _safe_int(card.get("base_defense"), 0) > 0
+    is_heal = _safe_int(card.get("base_heal"), 0) > 0
+    is_power = _safe_int(card.get("buff_effect"), BUFF_NONE) == BUFF_POWER
+
+    if style == "aggressive" and is_self_target and (is_defense or is_heal):
+        return 3.0
+    if style in ("defensive", "sustain") and is_attack:
+        return 2.0
+    if style == "setup" and is_attack:
+        return 1.5
+    if style == "balanced" and is_power:
+        return 0.8
+    return 0.0
 
 
 def _choose_scored_action(state_dict: dict, difficulty: str) -> dict:
