@@ -14,4 +14,5 @@ echo "Linking everything..."
 g++ *.o -o mac_smoketest
 
 echo "Compilation success. Running Smoke Test..."
+export ROCO_SMOKE_MAX_ROUNDS="${ROCO_SMOKE_MAX_ROUNDS:-3}"
 ./mac_smoketest

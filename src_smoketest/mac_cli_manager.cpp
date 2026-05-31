@@ -1,4 +1,5 @@
 #include "../src_gui/gui_manager.h"
+#include "../src_data/data_manager.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -41,6 +42,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     Action act;
     act.actor_id = player_id;
     act.switch_to_idx = -1;
+    act.target_idx = 0;
     
     Player* p = (player_id == 1) ? &state.p1 : &state.p2;
 
@@ -59,4 +61,36 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     }
     
     return act;
+}
+
+int SelectCharacterFromUI(int player_id, int slot_number) {
+    int p1_defaults[] = {0, 1, 2};
+    int p2_defaults[] = {3, 0, 1};
+    int selected = (player_id == 1) ? p1_defaults[slot_number] : p2_defaults[slot_number];
+
+    if (g_char_count <= 0) return 0;
+    selected %= g_char_count;
+    printf("[CLI] 玩家 %d 自动选择槽位 %d 的角色索引: %d\n", player_id, slot_number, selected);
+    return selected;
+}
+
+int SelectCardFromUI(int player_id, int current_deck_size) {
+    if (current_deck_size >= 16) return -1;
+    if (g_card_count <= 0) return -1;
+
+    int selected = (current_deck_size / 2) % g_card_count;
+    printf("[CLI] 玩家 %d 自动选择第 %d 张卡牌索引: %d\n",
+           player_id, current_deck_size + 1, selected);
+    return selected;
+}
+
+int GetModeSelectionFromUI() {
+    const char* raw = getenv("ROCO_GAME_MODE");
+    if (raw != NULL && raw[0] == '1') {
+        printf("[CLI] 环境变量选择 PvE 模式。\n");
+        return MODE_PVE;
+    }
+
+    printf("[CLI] 默认选择 PvP 模式。\n");
+    return MODE_PVP;
 }

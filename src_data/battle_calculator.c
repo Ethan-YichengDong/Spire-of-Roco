@@ -30,7 +30,7 @@ static Character* resolve_target(Player* acting, Player* enemy, int target_idx, 
             return &enemy->team[target_idx];
         return &enemy->team[enemy->active_idx];
     }
-}
+} 
 
 // 每回合结束时减少角色Buff持续回合数（护盾除外，其值为吸收量不受回合影响）
 static void decrement_buffs(Character* c) {
