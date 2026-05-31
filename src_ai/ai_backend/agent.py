@@ -30,6 +30,8 @@ TARGET_ENEMY_ALL = 1
 TARGET_SELF_SINGLE = 2
 TARGET_SELF_ALL = 3
 
+TEAM_SIZE = 3
+
 DEFAULT_AI_POLICY = "heuristic"
 DEFAULT_LLM_API = "openai"
 DEFAULT_LLM_BASE_URL = "http://114.212.227.193:8000"
@@ -41,6 +43,7 @@ DEFAULT_LLM_TEMPERATURE = 0.0
 
 def _end_turn(reason: str) -> dict:
     return {
+        "action_id": "end",
         "type": ACTION_END_TURN,
         "card_hand_idx": -1,
         "switch_to_idx": -1,
@@ -54,6 +57,7 @@ def _legacy_decision(state: dict) -> dict:
     hand_count = state.get("hand_count", 0)
     if energy > 0 and hand_count > 0:
         return {
+            "action_id": "legacy:play:0:0",
             "type": ACTION_PLAY_CARD,
             "card_hand_idx": 0,
             "switch_to_idx": -1,
@@ -126,6 +130,202 @@ def _alive(character: dict) -> bool:
 
 def _alive_members(player: dict) -> list:
     return [ch for ch in _team(player) if _alive(ch)]
+
+
+def _hand(player: dict) -> list:
+    return player.get("hand", [])
+
+
+def _indexed_team(player: dict) -> list:
+    return [(i, ch) for i, ch in enumerate(_team(player))]
+
+
+def _team_index(character: dict, fallback: int = 0) -> int:
+    return _safe_int(character.get("index"), fallback)
+
+
+def _card_hand_idx(card: dict, fallback: int = 0) -> int:
+    return _safe_int(card.get("hand_idx"), fallback)
+
+
+def _make_action_id(action: dict) -> str:
+    action_type = _safe_int(action.get("type"), ACTION_NONE)
+    if action_type == ACTION_PLAY_CARD:
+        return f"play:{_safe_int(action.get('card_hand_idx'), -1)}:{_safe_int(action.get('target_idx'), 0)}"
+    if action_type == ACTION_SWITCH_CHAR:
+        return f"switch:{_safe_int(action.get('switch_to_idx'), -1)}"
+    if action_type == ACTION_END_TURN:
+        return "end"
+    return "none"
+
+
+def _make_action(action_type: int, card_hand_idx: int, switch_to_idx: int, target_idx: int, reason: str) -> dict:
+    action = {
+        "type": action_type,
+        "card_hand_idx": card_hand_idx,
+        "switch_to_idx": switch_to_idx,
+        "target_idx": target_idx,
+        "debug_reason": reason,
+    }
+    action["action_id"] = _make_action_id(action)
+    return action
+
+
+def _find_card_by_hand_idx(player: dict, hand_idx: int) -> dict | None:
+    hand = _hand(player)
+    for fallback_idx, card in enumerate(hand):
+        if _card_hand_idx(card, fallback_idx) == hand_idx:
+            return card
+    if 0 <= hand_idx < len(hand):
+        return hand[hand_idx]
+    return None
+
+
+def _canonical_target_idx_for_card(card: dict, target_idx: int) -> int:
+    target_type = _safe_int(card.get("target_type"), TARGET_ENEMY_SINGLE)
+    if target_type == TARGET_ENEMY_ALL:
+        return -1
+    if target_type == TARGET_SELF_ALL:
+        return -2
+    if target_type == TARGET_SELF_SINGLE and 0 <= target_idx < TEAM_SIZE:
+        return 10 + target_idx
+    return target_idx
+
+
+def _action_signature(action: dict) -> tuple:
+    return (
+        _safe_int(action.get("type"), ACTION_NONE),
+        _safe_int(action.get("card_hand_idx"), -1),
+        _safe_int(action.get("switch_to_idx"), -1),
+        _safe_int(action.get("target_idx"), 0),
+    )
+
+
+def _play_targets_for_card(card: dict, player: dict, opponent: dict) -> list:
+    target_type = _safe_int(card.get("target_type"), TARGET_ENEMY_SINGLE)
+
+    if target_type == TARGET_ENEMY_SINGLE:
+        return [
+            _team_index(ch, fallback_idx)
+            for fallback_idx, ch in _indexed_team(opponent)
+            if _alive(ch)
+        ]
+
+    if target_type == TARGET_ENEMY_ALL:
+        return [-1] if _alive_members(opponent) else []
+
+    if target_type == TARGET_SELF_SINGLE:
+        # The engine currently normalizes dead self-single targets back to active,
+        # so the AI-side legal space keeps self-single targets alive-only.
+        return [
+            10 + _team_index(ch, fallback_idx)
+            for fallback_idx, ch in _indexed_team(player)
+            if _alive(ch)
+        ]
+
+    if target_type == TARGET_SELF_ALL:
+        return [-2]
+
+    return []
+
+
+def generate_legal_actions(state_dict: dict) -> list:
+    players = state_dict.get("players")
+    if not isinstance(players, dict):
+        return [_end_turn("missing_players")]
+
+    player = players.get("self", {})
+    opponent = players.get("opponent", {})
+    energy = max(0, _safe_int(player.get("energy"), 0))
+    hand_count = max(0, _safe_int(player.get("hand_count"), len(_hand(player))))
+    active_idx = _safe_int(player.get("active_idx"), 0)
+
+    legal_actions = []
+
+    for fallback_idx, member in _indexed_team(player):
+        switch_idx = _team_index(member, fallback_idx)
+        if switch_idx != active_idx and _alive(member):
+            legal_actions.append(
+                _make_action(
+                    ACTION_SWITCH_CHAR,
+                    -1,
+                    switch_idx,
+                    0,
+                    f"legal_switch_to_{switch_idx}",
+                )
+            )
+
+    for fallback_idx, card in enumerate(_hand(player)):
+        hand_idx = _card_hand_idx(card, fallback_idx)
+        if hand_idx < 0 or hand_idx >= hand_count:
+            continue
+        if _safe_int(card.get("energy_cost"), 0) > energy:
+            continue
+
+        for target_idx in _play_targets_for_card(card, player, opponent):
+            legal_actions.append(
+                _make_action(
+                    ACTION_PLAY_CARD,
+                    hand_idx,
+                    -1,
+                    target_idx,
+                    f"legal_play_{card.get('name', 'card')}",
+                )
+            )
+
+    legal_actions.append(_end_turn("legal_end_turn"))
+    return legal_actions
+
+
+def _canonicalize_action_for_state(action: dict, state_dict: dict) -> dict | None:
+    normalized = _normalize_action(action, "candidate_action")
+    if normalized is None:
+        return None
+
+    players = state_dict.get("players")
+    if not isinstance(players, dict):
+        normalized["action_id"] = _make_action_id(normalized)
+        return normalized
+
+    player = players.get("self", {})
+    if normalized["type"] == ACTION_PLAY_CARD:
+        card = _find_card_by_hand_idx(player, normalized["card_hand_idx"])
+        if card is None:
+            return None
+        normalized["target_idx"] = _canonical_target_idx_for_card(card, normalized["target_idx"])
+
+    normalized["action_id"] = _make_action_id(normalized)
+    return normalized
+
+
+def select_legal_action(candidate: dict, state_dict: dict, legal_actions: list | None = None) -> dict | None:
+    if not isinstance(candidate, dict):
+        return None
+
+    legal_actions = legal_actions if legal_actions is not None else generate_legal_actions(state_dict)
+    if not legal_actions:
+        return None
+
+    requested_id = candidate.get("action_id")
+    if requested_id is not None:
+        for legal_action in legal_actions:
+            if str(legal_action.get("action_id")) == str(requested_id):
+                selected = dict(legal_action)
+                selected["debug_reason"] = str(candidate.get("debug_reason", selected.get("debug_reason", "legal_action_id")))
+                return selected
+
+    canonical = _canonicalize_action_for_state(candidate, state_dict)
+    if canonical is None:
+        return None
+
+    signature = _action_signature(canonical)
+    for legal_action in legal_actions:
+        if _action_signature(legal_action) == signature:
+            selected = dict(legal_action)
+            selected["debug_reason"] = str(candidate.get("debug_reason", selected.get("debug_reason", "legal_action")))
+            return selected
+
+    return None
 
 
 def _hp_ratio(character: dict) -> float:
@@ -214,6 +414,9 @@ def _self_single_score(card: dict, player: dict) -> tuple:
 
     best = None
     for target in candidates:
+        if not _alive(target):
+            continue
+
         target_idx = int(target.get("index", 0))
         score = 0.0
 
@@ -222,8 +425,6 @@ def _self_single_score(card: dict, player: dict) -> tuple:
             missing = max(0, int(target.get("max_hp", 0)) - int(target.get("hp", 0)))
             effective_heal = min(heal, missing)
             score += effective_heal * 1.7
-            if not _alive(target):
-                score += 55.0
 
         defense = int(card.get("base_defense", 0))
         if defense > 0 and _alive(target):
@@ -240,6 +441,8 @@ def _self_single_score(card: dict, player: dict) -> tuple:
         if best is None or score > best[0]:
             best = (score, 10 + target_idx)
 
+    if best is None:
+        return 0.0, 10 + active_idx
     return best
 
 
@@ -318,6 +521,7 @@ def process_game_state_heuristic(state_dict: dict) -> dict:
     if not isinstance(players, dict):
         return _legacy_decision(state_dict)
 
+    legal_actions = generate_legal_actions(state_dict)
     player = players.get("self", {})
     opponent = players.get("opponent", {})
     energy = int(player.get("energy", 0))
@@ -325,13 +529,17 @@ def process_game_state_heuristic(state_dict: dict) -> dict:
     best_score, switch_idx = _score_switch(player)
     best_action = None
     if switch_idx >= 0:
-        best_action = {
-            "type": ACTION_SWITCH_CHAR,
-            "card_hand_idx": -1,
-            "switch_to_idx": switch_idx,
-            "target_idx": 0,
-            "debug_reason": "switch_to_healthier_character",
-        }
+        best_action = select_legal_action(
+            {
+                "type": ACTION_SWITCH_CHAR,
+                "card_hand_idx": -1,
+                "switch_to_idx": switch_idx,
+                "target_idx": 0,
+                "debug_reason": "switch_to_healthier_character",
+            },
+            state_dict,
+            legal_actions,
+        )
 
     for card in player.get("hand", []):
         cost = int(card.get("energy_cost", 0))
@@ -344,19 +552,30 @@ def process_game_state_heuristic(state_dict: dict) -> dict:
 
         # Slightly prefer efficient low-cost cards when scores are close.
         score += 1.0 / max(1, cost)
-
-        if best_action is None or score > best_score:
-            best_score = score
-            best_action = {
+        legal_candidate = select_legal_action(
+            {
                 "type": ACTION_PLAY_CARD,
                 "card_hand_idx": int(card.get("hand_idx", 0)),
                 "switch_to_idx": -1,
                 "target_idx": target_idx,
                 "debug_reason": f"play_{card.get('name', 'card')}",
-            }
+            },
+            state_dict,
+            legal_actions,
+        )
+        if legal_candidate is None:
+            continue
+
+        if best_action is None or score > best_score:
+            best_score = score
+            best_action = legal_candidate
 
     if best_action is None:
-        return _end_turn("no_profitable_action")
+        return select_legal_action(
+            {"action_id": "end", "debug_reason": "no_profitable_action"},
+            state_dict,
+            legal_actions,
+        ) or _end_turn("no_profitable_action")
 
     return best_action
 
@@ -472,9 +691,46 @@ def query_llm(prompt: str) -> dict:
     raise ValueError(f"unsupported_llm_api:{api_type}")
 
 
-def _build_llm_prompt(state_dict: dict, heuristic_action: dict) -> str:
+def _describe_action_for_prompt(action: dict, state_dict: dict) -> str:
+    players = state_dict.get("players", {})
+    player = players.get("self", {}) if isinstance(players, dict) else {}
+
+    action_type = _safe_int(action.get("type"), ACTION_NONE)
+    if action_type == ACTION_END_TURN:
+        return "End current turn"
+    if action_type == ACTION_SWITCH_CHAR:
+        return f"Switch active character to team index {action.get('switch_to_idx')}"
+    if action_type == ACTION_PLAY_CARD:
+        card = _find_card_by_hand_idx(player, _safe_int(action.get("card_hand_idx"), -1)) or {}
+        return (
+            f"Play hand[{action.get('card_hand_idx')}] "
+            f"{card.get('name', 'card')} to target {action.get('target_idx')}"
+        )
+    return "Unknown action"
+
+
+def _legal_actions_for_prompt(legal_actions: list, state_dict: dict) -> list:
+    return [
+        {
+            "action_id": action.get("action_id"),
+            "type": action.get("type"),
+            "card_hand_idx": action.get("card_hand_idx"),
+            "switch_to_idx": action.get("switch_to_idx"),
+            "target_idx": action.get("target_idx"),
+            "summary": _describe_action_for_prompt(action, state_dict),
+        }
+        for action in legal_actions
+    ]
+
+
+def _build_llm_prompt(state_dict: dict, heuristic_action: dict, legal_actions: list) -> str:
     compact_state = json.dumps(state_dict, ensure_ascii=False, separators=(",", ":"))
     compact_fallback = json.dumps(heuristic_action, ensure_ascii=False, separators=(",", ":"))
+    compact_legal_actions = json.dumps(
+        _legal_actions_for_prompt(legal_actions, state_dict),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return f"""
 你是《Spire of Roco》的 AI 玩家，请根据当前 GameState 选择一个合法动作。
 
@@ -490,11 +746,17 @@ def _build_llm_prompt(state_dict: dict, heuristic_action: dict) -> str:
 - 敌方全体: -1
 - 己方全体: -2
 
-只允许输出 JSON，不要解释。JSON 必须包含:
+只允许从合法动作列表中选择动作。推荐只输出:
+{{"action_id": str, "debug_reason": str}}
+
+也可以输出完整动作 JSON，但它必须与合法动作列表中的某一项完全匹配。完整 JSON 字段为:
 {{"type": int, "card_hand_idx": int, "switch_to_idx": int, "target_idx": int, "debug_reason": str}}
 
 如果无法判断，请返回这个启发式兜底动作:
 {compact_fallback}
+
+合法动作列表:
+{compact_legal_actions}
 
 当前状态:
 {compact_state}
@@ -502,8 +764,9 @@ def _build_llm_prompt(state_dict: dict, heuristic_action: dict) -> str:
 
 
 def process_game_state_llm(state_dict: dict) -> dict:
+    legal_actions = generate_legal_actions(state_dict)
     heuristic_action = process_game_state_heuristic(state_dict)
-    prompt = _build_llm_prompt(state_dict, heuristic_action)
+    prompt = _build_llm_prompt(state_dict, heuristic_action, legal_actions)
 
     try:
         llm_action = query_llm(prompt)
@@ -511,12 +774,13 @@ def process_game_state_llm(state_dict: dict) -> dict:
         heuristic_action["debug_reason"] = f"llm_fallback:{type(exc).__name__}"
         return heuristic_action
 
-    normalized = _normalize_action(llm_action, "llm_action")
-    if normalized is None:
+    selected = select_legal_action(llm_action, state_dict, legal_actions)
+    if selected is None:
         heuristic_action["debug_reason"] = "llm_fallback:invalid_action"
         return heuristic_action
 
-    return normalized
+    selected["debug_reason"] = str(llm_action.get("debug_reason", selected.get("debug_reason", "llm_action")))
+    return selected
 
 
 def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
