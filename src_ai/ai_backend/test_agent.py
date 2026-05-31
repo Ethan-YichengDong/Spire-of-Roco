@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 import unittest
 
 import agent
@@ -204,6 +207,36 @@ class AgentLegalActionTests(unittest.TestCase):
 
         self.assertEqual(action["action_id"], "play:1:-1")
         self.assertEqual(action["debug_reason"], "hybrid_choice")
+
+    def test_append_decision_log_writes_explanation_record(self):
+        state = make_attack_state()
+        action = agent.process_game_state(state, policy="hard")
+        old_enabled = os.environ.get("ROCO_AI_DECISION_LOG")
+        old_path = os.environ.get("ROCO_AI_DECISION_LOG_PATH")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "ai_decisions.jsonl")
+            os.environ["ROCO_AI_DECISION_LOG"] = "1"
+            os.environ["ROCO_AI_DECISION_LOG_PATH"] = log_path
+            try:
+                written_path = agent.append_decision_log(state, action, policy="hard")
+            finally:
+                if old_enabled is None:
+                    os.environ.pop("ROCO_AI_DECISION_LOG", None)
+                else:
+                    os.environ["ROCO_AI_DECISION_LOG"] = old_enabled
+                if old_path is None:
+                    os.environ.pop("ROCO_AI_DECISION_LOG_PATH", None)
+                else:
+                    os.environ["ROCO_AI_DECISION_LOG_PATH"] = old_path
+
+            self.assertEqual(str(written_path), log_path)
+            with open(log_path, encoding="utf-8") as fp:
+                record = json.loads(fp.readline())
+
+        self.assertEqual(record["policy"], "hard")
+        self.assertEqual(record["chosen_action"]["action_id"], action["action_id"])
+        self.assertGreater(len(record["top_candidates"]), 0)
 
 
 if __name__ == "__main__":

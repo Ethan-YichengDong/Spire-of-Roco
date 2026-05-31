@@ -1,7 +1,7 @@
 import socket
 import json
 import os
-from agent import process_game_state
+from agent import append_decision_log, process_game_state
 
 BUFFER_SIZE = 16384
 
@@ -40,6 +40,7 @@ def start_server():
         print(f"LLM API 类型: {os.getenv('ROCO_LLM_API', 'openai')}")
         print(f"LLM Base URL: {os.getenv('ROCO_LLM_BASE_URL', 'http://114.212.227.193:8000')}")
         print(f"LLM Model: {os.getenv('ROCO_LLM_MODEL', 'Qwen3.5-4B')}")
+        print(f"AI 决策日志: {os.getenv('ROCO_AI_DECISION_LOG', '1')}")
 
         while True:
             # 阻塞并接收到来的游戏引擎连接请求
@@ -56,6 +57,7 @@ def start_server():
                     
                     # 经过特定的逻辑处理模块（或大型模型）进行决策生成
                     action = process_game_state(state_dict)
+                    append_decision_log(state_dict, action, policy=os.getenv('ROCO_AI_POLICY', 'heuristic'))
                     
                     # 将决策转换为 JSON 字符串结构并编码发送回 C 游戏引擎
                     response_json = json.dumps(action, ensure_ascii=False)

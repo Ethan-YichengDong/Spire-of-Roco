@@ -3,6 +3,8 @@ import os
 import random
 import urllib.error
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 
 ACTION_NONE = 0
 ACTION_PLAY_CARD = 1
@@ -42,6 +44,8 @@ DEFAULT_LLM_MAX_TOKENS = 256
 DEFAULT_LLM_TEMPERATURE = 0.0
 DEFAULT_LLM_CANDIDATE_LIMIT = 8
 DEFAULT_LLM_STRICT_ACTION_ID = True
+DEFAULT_DECISION_LOG_ENABLED = True
+DEFAULT_DECISION_LOG_DIR = "logs"
 
 
 def _end_turn(reason: str) -> dict:
@@ -783,6 +787,20 @@ def _read_bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _decision_log_enabled() -> bool:
+    return _read_bool_env("ROCO_AI_DECISION_LOG", DEFAULT_DECISION_LOG_ENABLED)
+
+
+def _decision_log_path() -> Path:
+    configured_path = os.getenv("ROCO_AI_DECISION_LOG_PATH")
+    if configured_path:
+        return Path(configured_path)
+
+    log_dir = Path(os.getenv("ROCO_AI_DECISION_LOG_DIR", DEFAULT_DECISION_LOG_DIR))
+    date_tag = datetime.now().strftime("%Y%m%d")
+    return log_dir / f"ai_decisions_{date_tag}.jsonl"
+
+
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
     req = urllib.request.Request(
         url,
@@ -1031,6 +1049,43 @@ def process_game_state_hybrid(state_dict: dict) -> dict:
 
     selected["debug_reason"] = str(llm_action.get("debug_reason", selected.get("debug_reason", "hybrid_action")))
     return selected
+
+
+def explain_action(state_dict: dict, action: dict, policy: str | None = None, candidate_limit: int = 5) -> dict:
+    ranked = rank_legal_actions(state_dict, "hard")[: max(1, candidate_limit)]
+    return {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "policy": policy or os.getenv("ROCO_AI_POLICY", DEFAULT_AI_POLICY),
+        "round_count": state_dict.get("round_count"),
+        "current_turn": state_dict.get("current_turn"),
+        "ai_player_id": state_dict.get("ai_player_id"),
+        "chosen_action": action,
+        "state_summary": _state_summary_for_prompt(state_dict),
+        "top_candidates": [
+            {
+                "score": round(item["score"], 3),
+                "action": item["action"],
+                "summary": _describe_action_for_prompt(item["action"], state_dict),
+            }
+            for item in ranked
+        ],
+    }
+
+
+def append_decision_log(state_dict: dict, action: dict, policy: str | None = None) -> Path | None:
+    if not _decision_log_enabled():
+        return None
+
+    path = _decision_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = explain_action(state_dict, action, policy=policy)
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+            fp.write("\n")
+        return path
+    except OSError:
+        return None
 
 
 def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
