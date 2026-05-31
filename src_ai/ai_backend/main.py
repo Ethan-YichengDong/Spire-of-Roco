@@ -37,6 +37,9 @@ def start_server():
         s.listen()
         print(f"AI 后端服务器已经启动，正在监听以提供服务 {host}:{port}")
         print(f"当前 AI 策略入口: {os.getenv('ROCO_AI_POLICY', 'heuristic')}")
+        print(f"LLM API 类型: {os.getenv('ROCO_LLM_API', 'openai')}")
+        print(f"LLM Base URL: {os.getenv('ROCO_LLM_BASE_URL', 'http://114.212.227.193:8000')}")
+        print(f"LLM Model: {os.getenv('ROCO_LLM_MODEL', 'Qwen3.5-4B')}")
 
         while True:
             # 阻塞并接收到来的游戏引擎连接请求

@@ -31,9 +31,12 @@ TARGET_SELF_SINGLE = 2
 TARGET_SELF_ALL = 3
 
 DEFAULT_AI_POLICY = "heuristic"
-DEFAULT_LLM_URL = "http://127.0.0.1:11434/api/generate"
-DEFAULT_LLM_MODEL = "qwen"
+DEFAULT_LLM_API = "openai"
+DEFAULT_LLM_BASE_URL = "http://114.212.227.193:8000"
+DEFAULT_LLM_MODEL = "Qwen3.5-4B"
 DEFAULT_LLM_TIMEOUT = 5.0
+DEFAULT_LLM_MAX_TOKENS = 256
+DEFAULT_LLM_TEMPERATURE = 0.0
 
 
 def _end_turn(reason: str) -> dict:
@@ -378,10 +381,74 @@ def _extract_json_object(text: str) -> dict:
         raise
 
 
-def query_llm(prompt: str) -> dict:
-    url = os.getenv("ROCO_LLM_URL", DEFAULT_LLM_URL)
+def _join_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _read_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _read_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _post_json(url: str, payload: dict, timeout: float) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _query_openai_compatible(prompt: str) -> dict:
+    base_url = os.getenv("ROCO_LLM_BASE_URL", DEFAULT_LLM_BASE_URL)
+    url = os.getenv("ROCO_LLM_URL", _join_url(base_url, "/v1/chat/completions"))
     model = os.getenv("ROCO_LLM_MODEL", DEFAULT_LLM_MODEL)
-    timeout = float(os.getenv("ROCO_LLM_TIMEOUT", str(DEFAULT_LLM_TIMEOUT)))
+    timeout = _read_float_env("ROCO_LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT)
+    max_tokens = _read_int_env("ROCO_LLM_MAX_TOKENS", DEFAULT_LLM_MAX_TOKENS)
+    temperature = _read_float_env("ROCO_LLM_TEMPERATURE", DEFAULT_LLM_TEMPERATURE)
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是一个只输出合法 JSON 动作的卡牌游戏 AI。不要输出解释或 Markdown。",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    result = _post_json(url, payload, timeout)
+    choices = result.get("choices", [])
+    if not choices:
+        raise ValueError("openai_compatible_response_missing_choices")
+
+    choice = choices[0]
+    message = choice.get("message", {})
+    content = message.get("content", choice.get("text", ""))
+    if isinstance(content, list):
+        content = "".join(str(part.get("text", part)) if isinstance(part, dict) else str(part) for part in content)
+
+    return _extract_json_object(str(content))
+
+
+def _query_ollama_compatible(prompt: str) -> dict:
+    base_url = os.getenv("ROCO_LLM_BASE_URL", "http://127.0.0.1:11434")
+    url = os.getenv("ROCO_LLM_URL", _join_url(base_url, "/api/generate"))
+    model = os.getenv("ROCO_LLM_MODEL", "qwen")
+    timeout = _read_float_env("ROCO_LLM_TIMEOUT", DEFAULT_LLM_TIMEOUT)
     data = {
         "model": model,
         "prompt": prompt,
@@ -389,18 +456,20 @@ def query_llm(prompt: str) -> dict:
         "format": "json",
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        result = json.loads(response.read().decode("utf-8"))
-
+    result = _post_json(url, data, timeout)
     llm_response = result.get("response", result)
     if isinstance(llm_response, dict):
         return llm_response
     return _extract_json_object(str(llm_response))
+
+
+def query_llm(prompt: str) -> dict:
+    api_type = os.getenv("ROCO_LLM_API", DEFAULT_LLM_API).strip().lower()
+    if api_type in ("openai", "vllm", "qwen", "chat"):
+        return _query_openai_compatible(prompt)
+    if api_type in ("ollama", "generate"):
+        return _query_ollama_compatible(prompt)
+    raise ValueError(f"unsupported_llm_api:{api_type}")
 
 
 def _build_llm_prompt(state_dict: dict, heuristic_action: dict) -> str:
