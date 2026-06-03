@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/src_gui",
+                "${workspaceFolder}/src_engine",
+                "${workspaceFolder}/src_data",
+                "${workspaceFolder}/src_ai",
+                "D:/VSC/main/VC/Auxiliary/VS/include",
+                "D:/VSC/main/VC/Tools/MSVC/14.51.36231/include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "compilerPath": "D:/VSC/main/VC/Tools/MSVC/14.51.36231/bin/Hostx86/x86/cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x86"
+        }
+    ],
+    "version": 4
+}
