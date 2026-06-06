@@ -54,10 +54,13 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
 
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
-    draw_button(x, y, w, h, label);
-    // draw a small '(selected)' label at the right edge of the button (ASCII safe)
+    // Draw filled light-gray button to indicate selection (avoids overlay text and UTF8 issues)
+    setfillcolor(LIGHTGRAY);
+    setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
     settextcolor(BLACK);
-    outtextxy_utf8(x + w - 90, y + 6, "(selected)");
+    outtextxy_utf8(x + 6, y + 6, label);
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
@@ -457,7 +460,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
-    int confirm_x = sx + sw + 20, confirm_y = sy + g_char_count * (sh + 6);
+    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
     while (1) {
@@ -475,7 +478,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
                 int rx = sx, ry = sy + i * (sh + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
                     selected_idx = i;
-                    char overlay[128]; snprintf(overlay, sizeof(overlay), "Selected: %s", g_all_characters[i].name); draw_overlay_message(overlay);
+                    // don't draw overlays on every selection to avoid flicker
                     break;
                 }
             }
@@ -483,11 +486,9 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
             if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 if (selected_idx >= 0) {
                     char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_characters[selected_idx].name); draw_overlay_message(chosen);
-                    Sleep(200);
                     return selected_idx;
                 } else {
                     draw_overlay_message("No character selected");
-                    Sleep(200);
                 }
             }
         }
@@ -515,7 +516,7 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
-    int confirm_x = cx + cw + 20, confirm_y = cy + show * (ch + 6);
+    int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
     while (1) {
@@ -535,7 +536,7 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
                 int rx = cx, ry = cy + i * (ch + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
                     selected_idx = i;
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_overlay_message(chosen);
+                    // avoid frequent overlays to reduce flicker
                     break;
                 }
             }
@@ -547,11 +548,9 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
             if (point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
                 if (selected_idx >= 0) {
                     char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message(chosen);
-                    Sleep(200);
                     return selected_idx;
                 } else {
                     draw_overlay_message("No card selected");
-                    Sleep(200);
                 }
             }
         }
@@ -578,7 +577,7 @@ int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
     reset_draw_y(); draw_line("Main Menu: Select mode:");
     int bx = 60, by = g_draw_y + 10, bw = 240, bh = 60;
-    int confirm_x = bx + bw + 20, confirm_y = by + 120;
+    int confirm_x = bx, confirm_y = by + 200; // place confirm below options
     int selected_mode = -1;
     MOUSEMSG m;
     while (1) {
@@ -591,15 +590,15 @@ int GetModeSelectionFromUI() {
 
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; draw_overlay_message("Selected: PvP"); }
-            else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; draw_overlay_message("Selected: PvE"); }
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; }
+            else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; }
             else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 if (selected_mode == MODE_PVP || selected_mode == MODE_PVE) {
                     char msg[64]; snprintf(msg, sizeof(msg), "Mode confirmed: %s", (selected_mode == MODE_PVE) ? "PvE" : "PvP");
-                    draw_overlay_message(msg); Sleep(200);
+                    draw_overlay_message(msg);
                     return selected_mode;
                 } else {
-                    draw_overlay_message("No mode selected"); Sleep(200);
+                    draw_overlay_message("No mode selected");
                 }
             }
         }
