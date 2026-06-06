@@ -24,7 +24,7 @@ int SelectCharacterFromUI(int player_id, int slot_number);
 int SelectCardFromUI(int player_id, int current_deck_size);
 // 主菜单阶段：获取玩家的游戏模式选择，返回MODE_PVP或MODE_PVE（定义于game_core.h）
 int GetModeSelectionFromUI();
-
+#include "../src_data/data_manager.h"
 #ifdef __cplusplus
 }
 #endif
