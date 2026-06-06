@@ -7,3 +7,6 @@
 *.ilk
 *.exp
 *.lib
+# 忽略全部对局日志
+logs/*.log
+*.log
