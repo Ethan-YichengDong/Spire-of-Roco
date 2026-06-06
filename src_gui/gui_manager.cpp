@@ -9,7 +9,12 @@
 #include <windows.h>
 #include <string>
 static int g_draw_y = 10;
-static void reset_draw_y() { g_draw_y = 10; cleardevice(); }
+static void reset_draw_y() {
+    g_draw_y = 10;
+    setbkcolor(WHITE);
+    settextcolor(BLACK);
+    cleardevice();
+}
 
 // Convert UTF-8 C string to current ANSI code page string
 static std::string utf8_to_acp_str(const char* utf8) {
@@ -44,8 +49,9 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
     setlinecolor(BLACK);
+    settextcolor(BLACK);
     rectangle(x, y, x + w, y + h);
-    outtextxy(x + 6, y + 6, label);
+    outtextxy_utf8(x + 6, y + 6, label);
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
@@ -69,6 +75,7 @@ void InitGUI() {
 #ifdef USE_EASYX
     initgraph(800,600);
     setbkcolor(WHITE);
+    settextcolor(BLACK);
     cleardevice();
     settextstyle_utf8(20,0,"SimSun");
 #else
@@ -170,7 +177,20 @@ void RenderGameBoard(GameState state) {
 static void wait_for_enter(const char* prompt) {
 #ifdef USE_EASYX
     draw_line(prompt);
-    _getch();
+    Sleep(150);
+    while (1) {
+        if ((GetAsyncKeyState(VK_RETURN) & 0x8000) ||
+            (GetAsyncKeyState(VK_SPACE) & 0x8000) ||
+            (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
+            break;
+        }
+        Sleep(16);
+    }
+    while ((GetAsyncKeyState(VK_RETURN) & 0x8000) ||
+           (GetAsyncKeyState(VK_SPACE) & 0x8000) ||
+           (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
+        Sleep(16);
+    }
 #else
     printf("%s", prompt);
     fflush(stdout);
@@ -182,7 +202,7 @@ static void wait_for_enter(const char* prompt) {
 void ShowTurnTransitionMask(int player_id) {
 #ifdef USE_EASYX
     char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_line(buf);
-    wait_for_enter("Press any key to continue...");
+    wait_for_enter("Click, Space, or Enter to continue...");
 #else
     printf("\n---- 轮到 玩家 %d ----\n", player_id);
     wait_for_enter("按回车继续...\n");
@@ -344,6 +364,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
+    reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // 绘制为可点击列表
@@ -383,6 +404,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
+    reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d selecting card %d", player_id, current_deck_size + 1); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;

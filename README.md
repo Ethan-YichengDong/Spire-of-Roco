@@ -28,7 +28,47 @@
 - `src_gui/`：接管渲染线程，包含基于 EasyX 图形库渲染界面的 API 集合封装。
 - `src_ai/`：AI 模块。包含 C 侧 TCP Bridge、Python AI 后端、合法动作生成、LLM/启发式策略、评测脚本与构筑规划工具。
 
-## AI 分支当前用法
+## 用户使用指南
+
+请在项目根目录运行命令。程序会通过相对路径读取 `src_data/cards.txt` 和 `src_data/characters.txt`，从其他目录启动可能导致数据加载失败。
+
+### 一键运行 GUI 版本
+
+推荐使用 `run_gui.bat` 启动图形化版本：
+
+```bat
+run_gui.bat
+```
+
+首次运行时，脚本会自动下载 EasyX for MinGW 到项目本地目录 `third_party/easyx4mingw`，随后编译并启动 `roco_gui.exe`。依赖不会写入系统目录，也不会污染全局 MinGW 环境。
+
+如只想验证构建、不启动窗口：
+
+```bat
+run_gui.bat --no-run
+```
+
+也可以直接调用构建脚本：
+
+```bat
+build_gui_mingw.bat --no-run
+```
+
+### 游戏模式
+
+项目通过 `ROCO_GAME_MODE` 选择游戏模式：
+
+- `ROCO_GAME_MODE=0`：本地 PvP，玩家 1 与玩家 2 都由人工操作。
+- `ROCO_GAME_MODE=1`：PvE 人机对战，玩家 1 人工操作，玩家 2 通过 Python AI 后端或 C 侧 fallback AI 行动。
+
+默认一键 GUI 启动使用本地 PvP：
+
+```bat
+set ROCO_GAME_MODE=0
+run_gui.bat
+```
+
+启动 PvE 时，建议先在一个终端启动 AI 后端：
 
 启动本地 AI 后端：
 
@@ -37,6 +77,19 @@ set ROCO_AI_POLICY=hard
 py -3 -B src_ai\ai_backend\main.py
 ```
 
+然后在另一个终端启动 GUI：
+
+```bat
+set ROCO_GAME_MODE=1
+run_gui.bat
+```
+
+如果 Python AI 后端没有启动，C 引擎会在 Socket 连接失败后使用 fallback AI，避免游戏流程直接卡死。
+
+### 无 GUI 冒烟测试
+
+在没有 EasyX 或不想打开图形窗口时，可以运行控制台冒烟测试：
+
 运行无 EasyX 的 PvE 冒烟：
 
 ```bat
@@ -44,6 +97,10 @@ set ROCO_GAME_MODE=1
 set ROCO_SMOKE_MAX_ROUNDS=1
 run_smoketest_without_EasyX.bat
 ```
+
+`ROCO_SMOKE_MAX_ROUNDS` 用于限制最大回合数，适合快速验证编译、数据加载和基础战斗循环。
+
+### AI 工具
 
 运行 AI 评测：
 
@@ -66,3 +123,10 @@ py -3 -B src_ai\ai_backend\draft_planner.py --style aggressive --deck-size 16
 - `hybrid`：先由 `hard` 生成候选，再让 LLM 从候选 `action_id` 中选择。
 
 AI 决策日志默认写入 `logs/ai_decisions_YYYYMMDD.jsonl`，`logs/` 已被 git 忽略。
+
+## 环境与依赖说明
+
+- Windows 环境需要可用的 MinGW-w64 `gcc` / `g++`。
+- GUI 版本依赖 EasyX for MinGW，由 `run_gui.bat` 首次运行时自动下载安装到 `third_party/easyx4mingw`。
+- Python AI 后端当前主要使用标准库，可直接通过 `py -3 -B ...` 启动。
+- 项目生成物包括 `roco_gui.exe`、`windows_smoketest.exe`、`*.o` / `*.obj`、`logs/` 与 `third_party/`，其中日志和本地依赖目录已被 git 忽略。
