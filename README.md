@@ -17,13 +17,52 @@
   - **职责**：维护核心战斗回合状态机（GameState）、卡牌数值管理读取法则与规则校验。
   - **外壳渲染**：使用 **EasyX** 图形库提供原生本地轻量级的客户端窗体视图与游戏呈现。
   
-- **Python AI 后端 (AI Agent) —— 🚧 【待开发】**：
-  - **职责**：提供进阶AI决策算法应对玩家操作。
-  - **通信框架**：不借助底层FFI绑定，完全通过 **本地 TCP Sockets** 与 C 引擎互斥通信，C端向其广播 `GameState`，Python端回传决策结果。
-  - **状态**：整体模块现暂处于概念规划期，未进行实机开发。
+- **Python AI 后端 (AI Agent)**：
+  - **职责**：提供启发式、LLM 与混合式 AI 决策，应对玩家操作。
+  - **通信框架**：不借助底层FFI绑定，完全通过 **本地 TCP Sockets** 与 C 引擎通信，C端向其发送 `GameState`，Python端回传行动 JSON。
+  - **当前能力**：已支持合法动作生成、难度分层、LLM `action_id` 约束、批量评测、选角/构筑规划、对手建模与 AI 决策日志。
 
 ## 核心目录划分 📁
 - `src_data/`：游戏静、动态数值层。包含数值解析 (`cards.txt` / `characters.txt`) 以及独立伤害加成演算模块。
 - `src_engine/`：管理生命周期、游戏驱动进程环与校验机。
 - `src_gui/`：接管渲染线程，包含基于 EasyX 图形库渲染界面的 API 集合封装。
-- `src_ai/`：**[🚧 待开发]** 包含 C 侧作为TCP Bridge的套接字连接及 Python 侧的决策接收主程序。
+- `src_ai/`：AI 模块。包含 C 侧 TCP Bridge、Python AI 后端、合法动作生成、LLM/启发式策略、评测脚本与构筑规划工具。
+
+## AI 分支当前用法
+
+启动本地 AI 后端：
+
+```bat
+set ROCO_AI_POLICY=hard
+py -3 -B src_ai\ai_backend\main.py
+```
+
+运行无 EasyX 的 PvE 冒烟：
+
+```bat
+set ROCO_GAME_MODE=1
+set ROCO_SMOKE_MAX_ROUNDS=1
+run_smoketest_without_EasyX.bat
+```
+
+运行 AI 评测：
+
+```bat
+py -3 -B src_ai\ai_backend\evaluate.py --matches 20 --p1-policy random --p2-policy hard
+```
+
+生成 AI 选角/构筑推荐：
+
+```bat
+py -3 -B src_ai\ai_backend\draft_planner.py --style aggressive --deck-size 16
+```
+
+可用 AI 策略包括：
+
+- `easy`：随机合法动作。
+- `heuristic` / `normal`：普通启发式评分。
+- `hard`：增强启发式评分，带轻量前瞻与对手画像修正。
+- `llm`：调用 OpenAI-compatible / Qwen 后端，从合法 `action_id` 中选择。
+- `hybrid`：先由 `hard` 生成候选，再让 LLM 从候选 `action_id` 中选择。
+
+AI 决策日志默认写入 `logs/ai_decisions_YYYYMMDD.jsonl`，`logs/` 已被 git 忽略。

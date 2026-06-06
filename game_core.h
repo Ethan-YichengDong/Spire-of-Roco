@@ -15,9 +15,15 @@ typedef enum { CARD_TYPE_ATTACK = 0, CARD_TYPE_SKILL, CARD_TYPE_POWER } CardType
 typedef enum { BUFF_NONE = 0, BUFF_SHIELD, BUFF_WET, BUFF_BURN, BUFF_POISON, BUFF_POWER, BUFF_COUNT } BuffType;
 // 行动类型定义：无、出牌、切换角色、结束回合
 typedef enum { ACTION_NONE = 0, ACTION_PLAY_CARD, ACTION_SWITCH_CHAR, ACTION_END_TURN } ActionType;
+// 卡牌目标类型定义：敌方单体、敌方全体、己方单体、己方全体
+typedef enum { TARGET_ENEMY_SINGLE = 0, TARGET_ENEMY_ALL, TARGET_SELF_SINGLE, TARGET_SELF_ALL } TargetType;
 
 // 全局游戏状态所属的场景节点
 typedef enum { SCENE_MENU = 0, SCENE_DRAFT, SCENE_BATTLE, SCENE_RESULT } AppScene;
+
+// 游戏模式常量
+#define MODE_PVP 0   // 本地双人对战，P2由人工输入
+#define MODE_PVE 1   // 人机对战，P2通过Socket桥接调用AI后端
 
 // 卡牌结构体定义
 typedef struct {
@@ -28,9 +34,11 @@ typedef struct {
     int energy_cost;            // 能量消耗
     int base_damage;            // 基础伤害
     int base_defense;           // 基础防御/护盾值
+    int base_heal;              // 基础治疗值
     BuffType buff_effect;       // 施加的Buff类型
     int buff_value;             // Buff数值
     int buff_duration;          // Buff持续回合数
+    TargetType target_type;     // 卡牌目标类型（敌方单体/全体、己方单体/全体）
 } Card;
 
 // 角色结构体定义

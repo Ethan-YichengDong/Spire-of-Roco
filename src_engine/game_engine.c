@@ -4,80 +4,485 @@
 #include "../src_data/data_manager.h"
 #include "../src_ai/ai_bridge.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <direct.h>
+
+static FILE* g_battle_log = NULL;
+
+static const char* ElementName(ElementType element) {
+    switch (element) {
+        case ELEMENT_NORMAL: return "Normal";
+        case ELEMENT_WATER: return "Water";
+        case ELEMENT_FIRE: return "Fire";
+        case ELEMENT_GRASS: return "Grass";
+        case ELEMENT_ELECTRIC: return "Electric";
+        default: return "Unknown";
+    }
+}
+
+static const char* ActionName(ActionType type) {
+    switch (type) {
+        case ACTION_NONE: return "None";
+        case ACTION_PLAY_CARD: return "PlayCard";
+        case ACTION_SWITCH_CHAR: return "SwitchChar";
+        case ACTION_END_TURN: return "EndTurn";
+        default: return "Unknown";
+    }
+}
+
+static void EnsureLogDirExists(void) {
+    _mkdir("logs");
+}
+
+static void OpenBattleLog(void) {
+    EnsureLogDirExists();
+
+    time_t now = time(NULL);
+    struct tm* local_time = localtime(&now);
+    char path[128];
+
+    if (local_time != NULL) {
+        strftime(path, sizeof(path), "logs/battle_%Y%m%d_%H%M%S.log", local_time);
+    } else {
+        snprintf(path, sizeof(path), "logs/battle_unknown_time.log");
+    }
+
+    g_battle_log = fopen(path, "w");
+    if (g_battle_log == NULL) {
+        printf("[LOG] 无法创建战斗日志文件: %s\n", path);
+        return;
+    }
+
+    fprintf(g_battle_log, "Spire of Roco Battle Log\n");
+    fprintf(g_battle_log, "log_file=%s\n\n", path);
+    fflush(g_battle_log);
+    printf("[LOG] 战斗日志已写入: %s\n", path);
+}
+
+static void CloseBattleLog(void) {
+    if (g_battle_log == NULL) return;
+    fprintf(g_battle_log, "\n[LogClosed]\n");
+    fclose(g_battle_log);
+    g_battle_log = NULL;
+}
+
+static void LogCharacter(int slot, const Character* ch, int is_active) {
+    if (g_battle_log == NULL) return;
+
+    fprintf(g_battle_log,
+            "    slot=%d%s id=%d name=%s element=%s hp=%d/%d speed=%d alive=%d buffs=[",
+            slot, is_active ? " active" : "", ch->char_id, ch->name,
+            ElementName(ch->element), ch->hp, ch->max_hp, ch->speed, ch->is_alive);
+    for (int i = 0; i < BUFF_COUNT; i++) {
+        if (i > 0) fprintf(g_battle_log, ",");
+        fprintf(g_battle_log, "%d", ch->buffs[i]);
+    }
+    fprintf(g_battle_log, "]\n");
+}
+
+static void LogPlayerState(const char* label, const Player* player) {
+    if (g_battle_log == NULL) return;
+
+    fprintf(g_battle_log,
+            "  [%s] player_id=%d active_idx=%d energy=%d/%d hand=%d draw=%d discard=%d\n",
+            label, player->player_id, player->active_idx,
+            player->energy, player->max_energy,
+            player->hand_count, player->draw_count, player->discard_count);
+
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        LogCharacter(i, &player->team[i], i == player->active_idx);
+    }
+
+    fprintf(g_battle_log, "    hand_cards=");
+    for (int i = 0; i < player->hand_count; i++) {
+        if (i > 0) fprintf(g_battle_log, " | ");
+        fprintf(g_battle_log, "#%d:%s(cost=%d,type=%d,target=%d)",
+                i, player->hand[i].name, player->hand[i].energy_cost,
+                player->hand[i].type, player->hand[i].target_type);
+    }
+    fprintf(g_battle_log, "\n");
+}
+
+static void LogGameState(const char* title, const GameState* state) {
+    if (g_battle_log == NULL) return;
+
+    fprintf(g_battle_log, "\n[%s]\n", title);
+    fprintf(g_battle_log, "round=%d current_turn=%d stage=%d scene=%d\n",
+            state->round_count, state->current_turn,
+            state->game_stage, state->current_scene);
+    LogPlayerState("P1", &state->p1);
+    LogPlayerState("P2", &state->p2);
+    fflush(g_battle_log);
+}
+
+static void LogAction(const GameState* state, Action action) {
+    if (g_battle_log == NULL) return;
+
+    const Player* actor = (action.actor_id == 1) ? &state->p1 : &state->p2;
+    fprintf(g_battle_log,
+            "  P%d action=%s card_hand_idx=%d switch_to_idx=%d target_idx=%d",
+            action.actor_id, ActionName(action.type),
+            action.card_hand_idx, action.switch_to_idx, action.target_idx);
+
+    if (action.type == ACTION_PLAY_CARD &&
+        action.card_hand_idx >= 0 &&
+        action.card_hand_idx < actor->hand_count) {
+        const Card* card = &actor->hand[action.card_hand_idx];
+        fprintf(g_battle_log,
+                " card=%s cost=%d damage=%d defense=%d heal=%d target_type=%d",
+                card->name, card->energy_cost, card->base_damage,
+                card->base_defense, card->base_heal, card->target_type);
+    }
+
+    fprintf(g_battle_log, "\n");
+    fflush(g_battle_log);
+}
+
+static int ReadEnvInt(const char* name, int default_value, int min_value, int max_value) {
+    const char* raw = getenv(name);
+    if (raw == NULL || raw[0] == '\0') return default_value;
+
+    int value = atoi(raw);
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static int PlayerHasAliveCharacter(const Player* player) {
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        if (player->team[i].is_alive) return 1;
+    }
+    return 0;
+}
+
+static Action NormalizeActionForCurrentState(GameState* state, Action action, int actor_id) {
+    Player* acting = (actor_id == 1) ? &state->p1 : &state->p2;
+    Player* target = (actor_id == 1) ? &state->p2 : &state->p1;
+
+    action.actor_id = actor_id;
+
+    if (action.type == ACTION_SWITCH_CHAR) {
+        if (action.switch_to_idx < 0 || action.switch_to_idx >= TEAM_SIZE ||
+            !acting->team[action.switch_to_idx].is_alive) {
+            action.type = ACTION_END_TURN;
+        }
+        return action;
+    }
+
+    if (action.type != ACTION_PLAY_CARD) {
+        return action;
+    }
+
+    if (action.card_hand_idx < 0 || action.card_hand_idx >= acting->hand_count) {
+        action.type = ACTION_END_TURN;
+        return action;
+    }
+
+    Card* card = &acting->hand[action.card_hand_idx];
+    if (card->target_type == TARGET_ENEMY_ALL) {
+        action.target_idx = -1;
+    } else if (card->target_type == TARGET_SELF_ALL) {
+        action.target_idx = -2;
+    } else if (card->target_type == TARGET_SELF_SINGLE) {
+        if (action.target_idx >= 10 && action.target_idx < 10 + TEAM_SIZE) {
+            action.target_idx -= 10;
+        }
+        if (action.target_idx < 0 || action.target_idx >= TEAM_SIZE ||
+            !acting->team[action.target_idx].is_alive) {
+            action.target_idx = acting->active_idx;
+        }
+    } else {
+        if (action.target_idx < 0 || action.target_idx >= TEAM_SIZE ||
+            !target->team[action.target_idx].is_alive) {
+            action.target_idx = target->active_idx;
+        }
+    }
+
+    return action;
+}
 
 // 获取玩家2的行动，基于选择的游戏模式
 Action GetPlayer2Action(GameState state, int mode) {
-    if (mode == 0) {
+    if (mode == MODE_PVP) {
         // 本地 PvP 模式：接收玩家2的人工输入
         return GetHumanInputFromUI(2, state);
     } else {
-        // 模式1（PVE 模式）：通过 Socket 桥连调用 AI 后台（例如 Python 端）来生成行动
+        // MODE_PVE：通过 Socket 桥连调用 AI 后台来生成行动
         return GetAIActionFromBackend(state, 2);
     }
+}
+
+// 回合内循环：允许同一玩家连续出牌，直到能量耗尽或主动结束回合
+static void PlayerTurnLoop(GameState* state, int player_id, int mode) {
+    Player* player = (player_id == 1) ? &state->p1 : &state->p2;
+
+    while (player->hand_count > 0) {
+        // 若己方出战角色阵亡，自动切换到队伍中下一个存活角色
+        if (!player->team[player->active_idx].is_alive) {
+            remove_dead_from_team(player, player->active_idx);
+            if (!player->team[player->active_idx].is_alive) break;
+        }
+
+        // 检查是否还有足够的能量打出任意一张手牌
+        int can_act = 0;
+        for (int i = 0; i < player->hand_count; i++) {
+            if (player->energy >= player->hand[i].energy_cost) {
+                can_act = 1;
+                break;
+            }
+        }
+        if (!can_act) break;
+
+        RenderGameBoard(*state);
+
+        Action action;
+        if (player_id == 1) {
+            action = GetHumanInputFromUI(player_id, *state);
+        } else {
+            action = GetPlayer2Action(*state, mode);
+        }
+
+        action = NormalizeActionForCurrentState(state, action, player_id);
+        if (action.type == ACTION_END_TURN) break;
+
+        if (g_battle_log != NULL) {
+            fprintf(g_battle_log, "\n[TurnAction]\n");
+            LogAction(state, action);
+        }
+
+        ExecuteAction(state, &action, player_id);
+        LogGameState("AfterAction", state);
+    }
+}
+
+// ============================================================
+//  选角阶段：为指定玩家填充3个角色（不重复）
+// ============================================================
+static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* state) {
+    int retries = 0;
+
+    for (int slot = 0; slot < TEAM_SIZE; slot++) {
+        int char_idx;
+        if (player_id == 2 && mode == MODE_PVE) {
+            // PvE模式下P2由AI自动选角（占位逻辑，后续可替换为AI构筑）
+            char_idx = (slot < g_char_count) ? slot : 0;
+            printf("[引擎] PvE模式: AI为玩家2自动选择角色 %s\n", g_all_characters[char_idx].name);
+        } else {
+            char_idx = SelectCharacterFromUI(player_id, slot);
+        }
+
+        if (char_idx < 0 || char_idx >= g_char_count) {
+            printf("[引擎] 角色索引非法，自动选择0号角色\n");
+            char_idx = 0;
+        }
+
+        int duplicate = 0;
+        for (int prev = 0; prev < slot; prev++) {
+            if (player->team[prev].char_id == g_all_characters[char_idx].char_id) {
+                duplicate = 1;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            if (++retries >= 10) {
+                printf("[引擎] 重复次数过多，自动分配未使用角色\n");
+                for (int k = 0; k < g_char_count; k++) {
+                    int used = 0;
+                    for (int prev = 0; prev < slot; prev++) {
+                        if (player->team[prev].char_id == g_all_characters[k].char_id) {
+                            used = 1;
+                            break;
+                        }
+                    }
+                    if (!used) {
+                        assign_character_to_team(player, g_all_characters[k].char_id, slot);
+                        retries = 0;
+                        break;
+                    }
+                }
+            } else {
+                printf("[引擎] 角色重复，请重新选择\n");
+                slot--;
+                continue;
+            }
+        } else {
+            assign_character_to_team(player, g_all_characters[char_idx].char_id, slot);
+            retries = 0;
+        }
+
+        RenderGameBoard(*state);
+    }
+
+    player->active_idx = 0;
+}
+
+// ============================================================
+//  选牌阶段：为指定玩家逐张构筑牌库
+// ============================================================
+static void BuildDeckPhase(Player* player, int player_id, int mode) {
+    while (player->draw_count < MAX_DECK_SIZE) {
+        int card_idx;
+        if (player_id == 2 && mode == MODE_PVE) {
+            // PvE模式下P2由AI自动选牌（占位逻辑，后续可替换为AI构筑）
+            if (player->draw_count >= 16) break;
+            card_idx = (player->draw_count / 2) % g_card_count;
+            printf("[引擎] PvE模式: AI为玩家2自动选择卡牌 %s\n", g_all_cards[card_idx].name);
+        } else {
+            card_idx = SelectCardFromUI(player_id, player->draw_count);
+        }
+
+        if (card_idx < 0) break;
+        if (card_idx >= g_card_count) {
+            printf("[引擎] 卡牌索引非法，自动跳过\n");
+            continue;
+        }
+        player->draw_pile[player->draw_count++] = g_all_cards[card_idx];
+    }
+
+    printf("玩家%d 牌库共 %d 张卡牌\n", player_id, player->draw_count);
+    shuffle_draw_pile(player);
 }
 
 // 执行并管理游戏核心循环
 void RunGameLoop() {
     GameState state;
-    // 初始化基本状态
-    state.round_count = 1;      // 当前回合数初始化
-    state.current_turn = 1;     // 设置为玩家1的回合
-    state.game_stage = 1;       // 第一阶段
-    state.current_scene = SCENE_BATTLE; // 推入战斗节点
+    int mode;
+
+    memset(&state, 0, sizeof(GameState));
+    srand((unsigned int)time(NULL));
+
+    state.round_count = 1;
+    state.current_turn = 1;
     state.p1.player_id = 1;
     state.p2.player_id = 2;
-    state.p1.active_idx = 0;    // 当前出战角色设为队伍第一个（下标0）
-    state.p2.active_idx = 0;
-    
-    // 如果有读取到角色数据，为双方分配首发角色
-    if (g_char_count > 1) {
-        state.p1.team[0] = g_all_characters[0];
-        state.p2.team[0] = g_all_characters[1];
-    }
-    
-    // 初始化双方的初始手牌信息和能量池
-    state.p1.energy = 3;
-    state.p2.energy = 3;
-    state.p1.hand_count = 0;
-    state.p2.hand_count = 0;
-    
-    // 赋予双方手牌中的第一张卡（测试逻辑）
-    if (g_card_count > 0) {
-        state.p1.hand[state.p1.hand_count++] = g_all_cards[0];
-        state.p2.hand[state.p2.hand_count++] = g_all_cards[0];
-    }
+    strcpy(state.p1.name, "玩家1");
+    strcpy(state.p2.name, "玩家2");
+    state.p1.max_energy = 3;
+    state.p2.max_energy = 3;
+    init_deck(&state.p1);
+    init_deck(&state.p2);
 
-    // 初始化并呼出游戏图形界面
+    // ================================================================
+    //  场景一：SCENE_MENU — 主菜单
+    // ================================================================
+    state.current_scene = SCENE_MENU;
+    state.game_stage = 0;
     InitGUI();
+    OpenBattleLog();
+    LogGameState("InitialState", &state);
+    RenderGameBoard(state);
 
-    int mode = 0; // 当前设置为本地 PvP（后续可扩展配置项）
-    
-    // 游戏核心判定循环，只要两边主战角色都仍然存活就继续游戏
-    while (state.p1.team[state.p1.active_idx].is_alive && state.p2.team[state.p2.active_idx].is_alive) {
-        // 显示提示进入 玩家1 操作回合的UI界面
-        ShowTurnTransitionMask(1);
-        Action a1 = GetHumanInputFromUI(1, state);
-        
-        // 显示提示进入 玩家2 操作回合的UI界面
-        ShowTurnTransitionMask(2);
-        Action a2 = GetPlayer2Action(state, mode);
-        
-        // 双方动作提交完成后，送入结算器解析本回合效果及伤害
-        ResolveTurn(&state, a1, a2);
-        
-        // 刷新重绘界面，显示最新的血量/状态等信息
-        RenderGameBoard(state);
-
-        state.round_count++;
-        // 每回合开始时统一重置或发放能量（暂定回复至3点）
-        state.p1.energy = 3;
-        state.p2.energy = 3;
-        
-        // FIXME: 目前为了防止死循环在没有抽牌逻辑的情况下跑满内存，这里暂时使用 break 强行跳出
-        // 真实情况如果手牌打空或者判定胜利状态会自然 break，届时可以拓展这里的抽卡逻辑
-        break; 
+    int env_mode = ReadEnvInt("ROCO_GAME_MODE", -1, -1, 1);
+    if (env_mode >= 0) {
+        mode = env_mode;
+        printf("[Engine] 使用环境变量选择模式: %s\n",
+               mode == MODE_PVP ? "本地PvP" : "人机对战(PvE)");
+    } else {
+        mode = GetModeSelectionFromUI();
     }
 
-    // 摧毁/关闭GUI窗口
+    int max_rounds = ReadEnvInt("ROCO_SMOKE_MAX_ROUNDS", 0, 0, 10000);
+    if (max_rounds > 0) {
+        printf("[Engine] 冒烟最大回合数: %d\n", max_rounds);
+    }
+    printf("游戏模式: %s\n", (mode == MODE_PVP) ? "本地PvP" : "人机对战(PvE)");
+
+    // ================================================================
+    //  场景二：SCENE_DRAFT — 队伍选择与牌库构筑
+    // ================================================================
+    state.current_scene = SCENE_DRAFT;
+    state.game_stage = 1;
+    RenderGameBoard(state);
+
+    printf("\n===== 玩家1 队伍选择 =====\n");
+    SelectTeamPhase(&state.p1, 1, mode, &state);
+
+    ShowTurnTransitionMask(2);
+    printf("\n===== 玩家2 队伍选择 =====\n");
+    SelectTeamPhase(&state.p2, 2, mode, &state);
+
+    printf("\n===== 玩家1 牌库构筑 =====\n");
+    BuildDeckPhase(&state.p1, 1, mode);
+
+    ShowTurnTransitionMask(2);
+    printf("\n===== 玩家2 牌库构筑 =====\n");
+    BuildDeckPhase(&state.p2, 2, mode);
+
+    if (state.p1.draw_count == 0 || state.p2.draw_count == 0) {
+        printf("[引擎] 错误: 牌库不能为空，游戏异常退出。\n");
+        CloseBattleLog();
+        CloseGUI();
+        return;
+    }
+
+    draw_card(&state.p1, MAX_HAND_SIZE);
+    draw_card(&state.p2, MAX_HAND_SIZE);
+    state.p1.energy = state.p1.max_energy;
+    state.p2.energy = state.p2.max_energy;
+    LogGameState("AfterDraft", &state);
+
+    // ================================================================
+    //  场景三：SCENE_BATTLE — 战斗
+    // ================================================================
+    state.current_scene = SCENE_BATTLE;
+    state.game_stage = 2;
+    RenderGameBoard(state);
+
+    int p1_first = (rand() % 2 == 0);
+
+    while ((max_rounds == 0 || state.round_count <= max_rounds) &&
+           PlayerHasAliveCharacter(&state.p1) &&
+           PlayerHasAliveCharacter(&state.p2)) {
+        LogGameState("BeforeRound", &state);
+
+        if (p1_first) {
+            state.current_turn = 1;
+            ShowTurnTransitionMask(1);
+            PlayerTurnLoop(&state, 1, mode);
+
+            if (!PlayerHasAliveCharacter(&state.p2)) break;
+
+            state.current_turn = 2;
+            ShowTurnTransitionMask(2);
+            PlayerTurnLoop(&state, 2, mode);
+        } else {
+            state.current_turn = 2;
+            ShowTurnTransitionMask(2);
+            PlayerTurnLoop(&state, 2, mode);
+
+            if (!PlayerHasAliveCharacter(&state.p1)) break;
+
+            state.current_turn = 1;
+            ShowTurnTransitionMask(1);
+            PlayerTurnLoop(&state, 1, mode);
+        }
+
+        EndTurn(&state);
+        LogGameState("AfterRound", &state);
+        RenderGameBoard(state);
+        state.round_count++;
+    }
+
+    // ================================================================
+    //  场景四：SCENE_RESULT — 结算
+    // ================================================================
+    state.current_scene = SCENE_RESULT;
+    state.game_stage = 3;
+    RenderGameBoard(state);
+
+    int p1_alive = PlayerHasAliveCharacter(&state.p1);
+    printf("\n========== 游戏结束 ==========\n");
+    if (p1_alive) {
+        printf("玩家1获胜！\n");
+    } else {
+        printf("玩家2获胜！\n");
+    }
+    printf("总回合数: %d\n", state.round_count);
+    printf("===============================\n");
+
+    CloseBattleLog();
     CloseGUI();
 }
