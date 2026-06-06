@@ -62,6 +62,47 @@ static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
     }
     return 0;
 }
+
+// Draw a non-intrusive overlay message at the bottom of the screen to avoid
+// overlapping interactive UI elements (buttons, lists).
+static void draw_overlay_message(const char* utf8msg) {
+    std::string s = utf8_to_acp_str(utf8msg);
+    int x = 20, w = 760, h = 40, y = 540; // bottom area for messages
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
+    settextcolor(BLACK);
+    outtextxy(x + 6, y + 10, s.c_str());
+}
+
+// Render both teams' characters and HP on a side panel (right side) so that
+// their HP is always visible during the turn.
+static void draw_team_hp_panel(const GameState* st) {
+    if (!st) return;
+    int x = 520, y = 10;
+    char buf[128];
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    // background for panel
+    fillrectangle(x - 8, y - 4, 780, 220);
+    rectangle(x - 8, y - 4, 780, 220);
+    settextcolor(BLACK);
+    snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
+    outtextxy_utf8(x, y, buf); y += 22;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        snprintf(buf, sizeof(buf), " P1[%d] %s  HP:%d/%d", i, st->p1.team[i].name, st->p1.team[i].hp, st->p1.team[i].max_hp);
+        outtextxy_utf8(x, y, buf); y += 20;
+    }
+    y += 6;
+    snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
+    outtextxy_utf8(x, y, buf); y += 22;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        snprintf(buf, sizeof(buf), " P2[%d] %s  HP:%d/%d", i, st->p2.team[i].name, st->p2.team[i].hp, st->p2.team[i].max_hp);
+        outtextxy_utf8(x, y, buf); y += 20;
+    }
+}
+
 #endif
 #else
 // no graphical helpers
@@ -173,7 +214,8 @@ void RenderGameBoard(GameState state) {
 
 static void wait_for_enter(const char* prompt) {
 #ifdef USE_EASYX
-    draw_line(prompt);
+    // Draw prompt in a bottom overlay so it doesn't overlap buttons
+    draw_overlay_message(prompt);
     // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
     while (1) {
         // check for mouse clicks queued by EasyX
@@ -197,7 +239,7 @@ static void wait_for_enter(const char* prompt) {
 
 void ShowTurnTransitionMask(int player_id) {
 #ifdef USE_EASYX
-    char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_line(buf);
+    char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_overlay_message(buf);
     wait_for_enter("Press any key to continue...");
 #else
     printf("\n---- Turn: Player %d ----\n", player_id);
@@ -224,6 +266,8 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
 #ifdef USE_EASYX
     reset_draw_y();
+    // render side panel with HP so it's always visible
+    draw_team_hp_panel(&state);
     draw_line("Please choose action:");
     int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
     draw_button(bx, by, bw, bh, "End Turn");
@@ -256,7 +300,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                 // If not enough energy, show message and ignore this click
                                 if (p->energy < c->energy_cost) {
                                     char msg[128]; snprintf(msg, sizeof(msg), "Not enough energy: %s requires %d, current %d/%d", c->name, c->energy_cost, p->energy, p->max_energy);
-                                    draw_line(msg);
+                                    draw_overlay_message(msg);
                                     break; // end for loop and wait for next click
                                 }
                                 // 构造动作并显示信息
