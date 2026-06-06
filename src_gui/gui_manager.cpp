@@ -468,32 +468,40 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
-        // redraw list with selection marker
-        for (int i = 0; i < g_char_count; i++) {
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-            if (i == selected_idx) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
-            else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL); // keep HP panel intact; callers render full state before calling select
+            for (int i = 0; i < g_char_count; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+                if (i == selected_idx) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+            }
+            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            need_redraw = 0;
         }
-        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
 
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
                 int rx = sx, ry = sy + i * (sh + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
                     selected_idx = i;
-                    // don't draw overlays on every selection to avoid flicker
+                    need_redraw = 1;
+                    handled = 1;
                     break;
                 }
             }
             // confirm button
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 if (selected_idx >= 0) {
                     char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_characters[selected_idx].name); draw_overlay_message(chosen);
                     return selected_idx;
                 } else {
                     draw_overlay_message("No character selected");
+                    need_redraw = 1;
                 }
             }
         }
@@ -525,21 +533,28 @@ int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indic
     int* selected = (int*)malloc(sizeof(int) * g_char_count);
     memset(selected, 0, sizeof(int) * g_char_count);
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
-        for (int i = 0; i < g_char_count; i++) {
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-            if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
-            else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL);
+            for (int i = 0; i < g_char_count; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+                if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+            }
+            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            need_redraw = 0;
         }
-        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
 
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
                 int rx = sx, ry = sy + i * (sh + 6);
-                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; break; }
+                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
             }
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 int count = 0;
                 for (int i = 0; i < g_char_count && count < max_select; i++) { if (selected[i]) out_indices[count++] = i; }
                 free(selected);
@@ -576,38 +591,46 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
-        // redraw list with selection marker
-        for (int i = 0; i < show; i++) {
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-            if (i == selected_idx) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
-            else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL);
+            for (int i = 0; i < show; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+                if (i == selected_idx) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
+                else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+            }
+            // add finish and confirm buttons
+            draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+            draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+            need_redraw = 0;
         }
-        // add finish and confirm buttons
-        draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
-        draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
 
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < show; i++) {
                 int rx = cx, ry = cy + i * (ch + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
                     selected_idx = i;
-                    // avoid frequent overlays to reduce flicker
+                    need_redraw = 1;
+                    handled = 1;
                     break;
                 }
             }
             // finish button
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 return -1;
             }
             // confirm button
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
                 if (selected_idx >= 0) {
                     char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message(chosen);
                     return selected_idx;
                 } else {
                     draw_overlay_message("No card selected");
+                    need_redraw = 1;
                 }
             }
         }
@@ -643,32 +666,40 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
     int* selected = (int*)malloc(sizeof(int) * show);
     memset(selected, 0, sizeof(int) * show);
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
-        // redraw list with multi-selection markers
-        for (int i = 0; i < show; i++) {
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-            if (selected[i]) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
-            else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL);
+            for (int i = 0; i < show; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+                if (selected[i]) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
+                else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+            }
+            draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+            draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+            need_redraw = 0;
         }
-        draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
-        draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
 
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < show; i++) {
                 int rx = cx, ry = cy + i * (ch + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
                     selected[i] = !selected[i];
+                    need_redraw = 1;
+                    handled = 1;
                     break;
                 }
             }
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 // Finish Build: treat as cancel
                 free(selected);
                 if (out_count) *out_count = 0;
                 return 0;
             }
-            if (point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
                     if (selected[i]) out_indices[count++] = i;
