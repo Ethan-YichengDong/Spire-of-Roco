@@ -22,6 +22,10 @@ Action GetHumanInputFromUI(int player_id, GameState state);
 int SelectCharacterFromUI(int player_id, int slot_number);
 // 卡牌选择阶段：让玩家从全局卡牌池中为牌库挑选卡牌，返回在g_all_cards中的索引，返回-1表示结束选择
 int SelectCardFromUI(int player_id, int current_deck_size);
+// 新：批量选择角色（用于一次性选择多个角色）。out_indices需分配至少max_select长度；返回选中数量（0表示取消）
+int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indices, int* out_count);
+// 新：批量选择卡牌（用于一次性选择多张牌）。out_indices需分配至少max_select长度；返回选中数量（0表示取消）
+int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count);
 // 主菜单阶段：获取玩家的游戏模式选择，返回MODE_PVP或MODE_PVE（定义于game_core.h）
 int GetModeSelectionFromUI();
 #include "../src_data/data_manager.h"

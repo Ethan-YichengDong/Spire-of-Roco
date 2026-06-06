@@ -263,54 +263,42 @@ static void PlayerTurnLoop(GameState* state, int player_id, int mode) {
 static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* state) {
     int retries = 0;
 
-    for (int slot = 0; slot < TEAM_SIZE; slot++) {
-        int char_idx;
+    int slot = 0;
+    while (slot < TEAM_SIZE) {
+        int picks[TEAM_SIZE]; int pick_count = 0;
         if (player_id == 2 && mode == MODE_PVE) {
-            // PvE模式下P2由AI自动选角（占位逻辑，后续可替换为AI构筑）
-            char_idx = (slot < g_char_count) ? slot : 0;
-            printf("[引擎] PvE模式: AI为玩家2自动选择角色 %s\n", g_all_characters[char_idx].name);
-        } else {
-            char_idx = SelectCharacterFromUI(player_id, slot);
-        }
-
-        if (char_idx < 0 || char_idx >= g_char_count) {
-            printf("[引擎] 角色索引非法，自动选择0号角色\n");
-            char_idx = 0;
-        }
-
-        int duplicate = 0;
-        for (int prev = 0; prev < slot; prev++) {
-            if (player->team[prev].char_id == g_all_characters[char_idx].char_id) {
-                duplicate = 1;
-                break;
+            // PvE mode: AI fills remaining slots
+            for (; slot < TEAM_SIZE; slot++) {
+                int char_idx = (slot < g_char_count) ? slot : 0;
+                printf("[Engine] PvE: AI selects character %s\n", g_all_characters[char_idx].name);
+                assign_character_to_team(player, g_all_characters[char_idx].char_id, slot);
             }
+            break;
+        } else {
+            // Allow player to select multiple characters at once
+            pick_count = SelectMultipleCharactersFromUI(player_id, TEAM_SIZE - slot, picks, &pick_count);
         }
 
-        if (duplicate) {
-            if (++retries >= 10) {
-                printf("[引擎] 重复次数过多，自动分配未使用角色\n");
-                for (int k = 0; k < g_char_count; k++) {
-                    int used = 0;
-                    for (int prev = 0; prev < slot; prev++) {
-                        if (player->team[prev].char_id == g_all_characters[k].char_id) {
-                            used = 1;
-                            break;
-                        }
-                    }
-                    if (!used) {
-                        assign_character_to_team(player, g_all_characters[k].char_id, slot);
-                        retries = 0;
-                        break;
-                    }
-                }
-            } else {
-                printf("[引擎] 角色重复，请重新选择\n");
-                slot--;
+        if (pick_count <= 0) {
+            // no picks, let user try again
+            continue;
+        }
+
+        for (int pi = 0; pi < pick_count && slot < TEAM_SIZE; pi++) {
+            int char_idx = picks[pi];
+            if (char_idx < 0 || char_idx >= g_char_count) {
+                printf("[Engine] invalid character index, selecting 0\n"); char_idx = 0;
+            }
+            int duplicate = 0;
+            for (int prev = 0; prev < slot; prev++) {
+                if (player->team[prev].char_id == g_all_characters[char_idx].char_id) { duplicate = 1; break; }
+            }
+            if (duplicate) {
+                printf("[Engine] duplicate selection %s, skipped\n", g_all_characters[char_idx].name);
                 continue;
             }
-        } else {
             assign_character_to_team(player, g_all_characters[char_idx].char_id, slot);
-            retries = 0;
+            slot++; retries = 0;
         }
 
         RenderGameBoard(*state);
@@ -324,22 +312,33 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
 // ============================================================
 static void BuildDeckPhase(Player* player, int player_id, int mode) {
     while (player->draw_count < MAX_DECK_SIZE) {
-        int card_idx;
+        int picks[MAX_DECK_SIZE]; int pick_count = 0;
         if (player_id == 2 && mode == MODE_PVE) {
-            // PvE模式下P2由AI自动选牌（占位逻辑，后续可替换为AI构筑）
+            // PvE: AI selects remaining cards (placeholder logic)
             if (player->draw_count >= 16) break;
-            card_idx = (player->draw_count / 2) % g_card_count;
-            printf("[引擎] PvE模式: AI为玩家2自动选择卡牌 %s\n", g_all_cards[card_idx].name);
+            int card_idx = (player->draw_count / 2) % g_card_count;
+            printf("[Engine] PvE: AI selects card %s\n", g_all_cards[card_idx].name);
+            player->draw_pile[player->draw_count++] = g_all_cards[card_idx];
+            continue;
         } else {
-            card_idx = SelectCardFromUI(player_id, player->draw_count);
+            // Let player pick multiple cards at once
+            pick_count = SelectMultipleCardsFromUI(player_id, MAX_DECK_SIZE - player->draw_count, picks, &pick_count);
         }
 
-        if (card_idx < 0) break;
-        if (card_idx >= g_card_count) {
-            printf("[引擎] 卡牌索引非法，自动跳过\n");
-            continue;
+        if (pick_count <= 0) {
+            if (player->draw_count == 0) {
+                // Prevent finishing with an empty deck; prompt user to pick at least one card
+                printf("[Engine] Deck cannot be empty. Please select at least one card.\n");
+                continue;
+            } else {
+                break;
+            }
         }
-        player->draw_pile[player->draw_count++] = g_all_cards[card_idx];
+        for (int pi = 0; pi < pick_count && player->draw_count < MAX_DECK_SIZE; pi++) {
+            int card_idx = picks[pi];
+            if (card_idx < 0 || card_idx >= g_card_count) { printf("[Engine] invalid card index, skipped\n"); continue; }
+            player->draw_pile[player->draw_count++] = g_all_cards[card_idx];
+        }
     }
 
     printf("玩家%d 牌库共 %d 张卡牌\n", player_id, player->draw_count);

@@ -9,7 +9,7 @@
 #include <windows.h>
 #include <string>
 static int g_draw_y = 10;
-static void reset_draw_y() { g_draw_y = 10; cleardevice(); }
+static void reset_draw_y() { g_draw_y = 10; /* avoid full clear to reduce flicker; callers should clear when needed */ }
 
 // Convert UTF-8 C string to current ANSI code page string
 static std::string utf8_to_acp_str(const char* utf8) {
@@ -459,6 +459,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
+    // legacy single-select preserved for compatibility
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
@@ -513,8 +514,60 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 #endif
 }
 
+// New: multi-select characters at once. Returns number selected (0 = none). Fills out_indices and out_count.
+int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
+#ifdef USE_EASYX
+    reset_draw_y();
+    char buf[128]; snprintf(buf, sizeof(buf), "[Character Select - Multi] Player %d - select up to %d", player_id, max_select); draw_line(buf);
+    if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
+    int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
+    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
+    int* selected = (int*)malloc(sizeof(int) * g_char_count);
+    memset(selected, 0, sizeof(int) * g_char_count);
+    MOUSEMSG m;
+    while (1) {
+        for (int i = 0; i < g_char_count; i++) {
+            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+            if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+            else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+        }
+        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            for (int i = 0; i < g_char_count; i++) {
+                int rx = sx, ry = sy + i * (sh + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; break; }
+            }
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                int count = 0;
+                for (int i = 0; i < g_char_count && count < max_select; i++) { if (selected[i]) out_indices[count++] = i; }
+                free(selected);
+                if (out_count) *out_count = count;
+                return count;
+            }
+        }
+    }
+#else
+    printf("\n[Character Select - Multi] Player %d - select up to %d (enter indices separated by space, -1 to finish)\n", player_id, max_select);
+    if (g_char_count == 0) { printf("Global character pool empty, returning 0\n"); if (out_count) *out_count = 0; return 0; }
+    for (int i = 0; i < g_char_count; i++) printf(" %2d: %s (ID:%d) HP:%d Speed:%d\n", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+    int count = 0; int idx = -2;
+    while (count < max_select) {
+        if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); break; }
+        if (idx == -1) break;
+        if (idx < 0 || idx >= g_char_count) continue;
+        out_indices[count++] = idx;
+    }
+    while(getchar()!='\n');
+    if (out_count) *out_count = count;
+    return count;
+#endif
+}
+
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
+    // legacy single-select behavior preserved for compatibility
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
@@ -574,6 +627,74 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     if (sel < 0 || sel >= g_card_count) sel = 0;
     printf("Selected: %s\n", g_all_cards[sel].name);
     return sel;
+#endif
+}
+
+// New: allow selecting multiple cards at once; returns number of selected indices (0 = none), fills out_indices and sets out_count
+int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
+#ifdef USE_EASYX
+    reset_draw_y();
+    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build - Multi] Player %d - select up to %d", player_id, max_select); draw_line(buf);
+    if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
+    int show = g_card_count < 20 ? g_card_count : 20;
+    int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
+    int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
+    // selection flags
+    int* selected = (int*)malloc(sizeof(int) * show);
+    memset(selected, 0, sizeof(int) * show);
+    MOUSEMSG m;
+    while (1) {
+        // redraw list with multi-selection markers
+        for (int i = 0; i < show; i++) {
+            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+            if (selected[i]) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
+            else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+        }
+        draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+        draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            for (int i = 0; i < show; i++) {
+                int rx = cx, ry = cy + i * (ch + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
+                    selected[i] = !selected[i];
+                    break;
+                }
+            }
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                // Finish Build: treat as cancel
+                free(selected);
+                if (out_count) *out_count = 0;
+                return 0;
+            }
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+                int count = 0;
+                for (int i = 0; i < show && count < max_select; i++) {
+                    if (selected[i]) out_indices[count++] = i;
+                }
+                free(selected);
+                if (out_count) *out_count = count;
+                return count;
+            }
+        }
+    }
+#else
+    // Console fallback: allow entering multiple indices separated by spaces, end with -1
+    printf("\n[Deck Build - Multi] Player %d - select up to %d, enter indices separated by spaces, -1 to finish:\n", player_id, max_select);
+    if (g_card_count == 0) { printf("Global card pool empty, returning 0\n"); if (out_count) *out_count = 0; return 0; }
+    int show = g_card_count < 20 ? g_card_count : 20;
+    for (int i = 0; i < show; i++) { print_card(&g_all_cards[i], i); }
+    int idx = -2; int count = 0;
+    while (count < max_select) {
+        if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); break; }
+        if (idx == -1) break;
+        if (idx < 0 || idx >= g_card_count) continue;
+        out_indices[count++] = idx;
+    }
+    while(getchar()!='\n');
+    if (out_count) *out_count = count;
+    return count;
 #endif
 }
 
