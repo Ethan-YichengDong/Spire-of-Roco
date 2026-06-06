@@ -9,7 +9,7 @@
 #include <windows.h>
 #include <string>
 static int g_draw_y = 10;
-static void reset_draw_y() { g_draw_y = 10; /* avoid full clear to reduce flicker; callers should clear when needed */ }
+static void reset_draw_y() { g_draw_y = 10; cleardevice(); }
 
 // Convert UTF-8 C string to current ANSI code page string
 static std::string utf8_to_acp_str(const char* utf8) {
