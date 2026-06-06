@@ -43,9 +43,13 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
 }
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
+    // Draw filled button with visible text to avoid overlap artifacts
+    setfillcolor(WHITE);
     setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
     rectangle(x, y, x + w, y + h);
-    outtextxy(x + 6, y + 6, label);
+    settextcolor(BLACK);
+    outtextxy_utf8(x + 6, y + 6, label);
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
@@ -170,7 +174,19 @@ void RenderGameBoard(GameState state) {
 static void wait_for_enter(const char* prompt) {
 #ifdef USE_EASYX
     draw_line(prompt);
-    _getch();
+    // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
+    while (1) {
+        // check for mouse clicks queued by EasyX
+        if (MouseHit()) {
+            MOUSEMSG mm = GetMouseMsg();
+            if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
+        }
+        // check keyboard state (any key)
+        for (int vk = 8; vk <= 255; vk++) {
+            if (GetAsyncKeyState(vk) & 0x8000) return;
+        }
+        Sleep(10);
+    }
 #else
     printf("%s", prompt);
     fflush(stdout);
@@ -221,8 +237,10 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
                 if (p->hand_count == 0) { draw_line("Hand empty, cannot play."); continue; }
-                // 显示手牌为可点按钮
-                int hx = 260, hy = by, hw = 220, hh = 40;
+                // 清理并显示手牌为可点按钮（避免文本重叠）
+                reset_draw_y();
+                draw_line("Select a hand card:");
+                int hx = 260, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
@@ -267,8 +285,10 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 }
             }
             else if (point_in_rect(m.x, m.y, bx, by + 120, bw, bh)) {
-                // 显示可切换角色
-                int sx = 260, sy = by, sw = 300, sh = 48;
+                // 清理并显示可切换角色（避免文本重叠）
+                reset_draw_y();
+                draw_line("Select a character to switch:");
+                int sx = 260, sy = g_draw_y + 10, sw = 300, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
@@ -344,6 +364,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
+    reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // 绘制为可点击列表
@@ -383,6 +404,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
+    reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d selecting card %d", player_id, current_deck_size + 1); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
