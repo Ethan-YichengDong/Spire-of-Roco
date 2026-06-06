@@ -55,9 +55,9 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
     draw_button(x, y, w, h, label);
-    // draw a small tick mark at the right edge of the button (UTF-8 check glyph)
+    // draw a small '(selected)' label at the right edge of the button (ASCII safe)
     settextcolor(BLACK);
-    outtextxy_utf8(x + w - 30, y + 6, "✔");
+    outtextxy_utf8(x + w - 90, y + 6, "(selected)");
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
