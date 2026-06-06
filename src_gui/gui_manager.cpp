@@ -9,6 +9,28 @@
 static int g_draw_y = 10;
 static void reset_draw_y() { g_draw_y = 10; cleardevice(); }
 static void draw_line(const char* s) { outtextxy(10, g_draw_y, s); g_draw_y += 24; }
+#ifdef USE_EASYX
+static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+}
+
+static void draw_button(int x, int y, int w, int h, const char* label) {
+    setlinecolor(BLACK);
+    rectangle(x, y, x + w, y + h);
+    outtextxy(x + 6, y + 6, label);
+}
+
+static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
+    MOUSEMSG m;
+    while (1) {
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            if (point_in_rect(m.x, m.y, rx, ry, rw, rh)) return 1;
+        }
+    }
+    return 0;
+}
+#endif
 #else
 // no graphical helpers
 #endif
@@ -156,6 +178,93 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
         p = (player_id == 1) ? (Player*)&state.p1 : (Player*)&state.p2;
     }
 
+#ifdef USE_EASYX
+    reset_draw_y();
+    draw_line("请选择操作：");
+    int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
+    draw_button(bx, by, bw, bh, "结束回合");
+    draw_button(bx, by + 60, bw, bh, "出牌");
+    draw_button(bx, by + 120, bw, bh, "切换角色");
+
+    MOUSEMSG m;
+    while (1) {
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
+            else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
+                if (p->hand_count == 0) { draw_line("手牌为空，无法出牌。"); continue; }
+                // 显示手牌为可点按钮
+                int hx = 260, hy = by, hw = 220, hh = 40;
+                for (int i = 0; i < p->hand_count; i++) {
+                    char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
+                    draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
+                }
+                // 等待手牌点击
+                while (1) {
+                    m = GetMouseMsg();
+                    if (m.uMsg == WM_LBUTTONDOWN) {
+                        for (int i = 0; i < p->hand_count; i++) {
+                            int rx = hx, ry = hy + i * (hh + 8);
+                            if (point_in_rect(m.x, m.y, rx, ry, hw, hh)) {
+                                act.type = ACTION_PLAY_CARD;
+                                act.card_hand_idx = i;
+                                act.actor_id = player_id;
+                                Card* c = &p->hand[i];
+                                if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
+                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮）
+                                    int tx = 30, ty = hy + p->hand_count * (hh + 8) + 20, tw = 140, th = 40;
+                                    for (int t = 0; t < TEAM_SIZE; t++) {
+                                        char tb[64]; snprintf(tb, sizeof(tb), "目标 %d", t);
+                                        draw_button(tx + t * (tw + 8), ty, tw, th, tb);
+                                    }
+                                    while (1) {
+                                        m = GetMouseMsg();
+                                        if (m.uMsg == WM_LBUTTONDOWN) {
+                                            for (int t = 0; t < TEAM_SIZE; t++) {
+                                                int rx2 = tx + t * (tw + 8);
+                                                if (point_in_rect(m.x, m.y, rx2, ty, tw, th)) {
+                                                    act.target_idx = t;
+                                                    return act;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    act.target_idx = 0; // 全体
+                                    return act;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else if (point_in_rect(m.x, m.y, bx, by + 120, bw, bh)) {
+                // 显示可切换角色
+                int sx = 260, sy = by, sw = 300, sh = 48;
+                for (int i = 0; i < TEAM_SIZE; i++) {
+                    char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
+                    draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
+                }
+                while (1) {
+                    m = GetMouseMsg();
+                    if (m.uMsg == WM_LBUTTONDOWN) {
+                        for (int i = 0; i < TEAM_SIZE; i++) {
+                            int rx = sx, ry = sy + i * (sh + 8);
+                            if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
+                                if (!p->team[i].is_alive) { draw_line("角色已阵亡"); break; }
+                                act.type = ACTION_SWITCH_CHAR;
+                                act.switch_to_idx = i;
+                                act.actor_id = player_id;
+                                return act;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+#else
+    // 退回控制台实现
     while (1) {
         printf("\n玩家 %d 操作选择：\n", player_id);
         printf(" 0: 结束回合\n 1: 出牌\n 2: 切换角色\n");
@@ -176,7 +285,6 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             act.type = ACTION_PLAY_CARD;
             act.card_hand_idx = idx;
             act.actor_id = player_id;
-            // 简化：若卡为单体目标，询问目标队伍索引；若为全体则填0
             Card* c = &p->hand[idx];
             if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                 printf("请选择目标索引 (0..%d): ", TEAM_SIZE - 1);
@@ -184,16 +292,12 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
                 while(getchar()!='\n');
                 act.target_idx = tid;
-            } else {
-                act.target_idx = 0; // 代表全体
-            }
+            } else { act.target_idx = 0; }
             return act;
         }
         else if (opt == 2) {
             printf("可切换的队伍成员:\n");
-            for (int i = 0; i < TEAM_SIZE; i++) {
-                printf(" %d: ", i); print_character(&p->team[i]);
-            }
+            for (int i = 0; i < TEAM_SIZE; i++) { printf(" %d: ", i); print_character(&p->team[i]); }
             printf("请选择切换到的索引 (0..%d): ", TEAM_SIZE - 1);
             int s = -1;
             if (scanf("%d", &s) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
@@ -204,26 +308,35 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             act.actor_id = player_id;
             return act;
         }
-        else {
-            printf("未知选项，请重试。\n");
-        }
+        else { printf("未知选项，请重试。\n"); }
     }
+#endif
 }
+
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
-    char buf[128]; snprintf(buf,sizeof(buf), "[角色选择] 玩家 %d 为槽位 %d 选择角色", player_id, slot_number); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "[角色选择] 玩家 %d 为槽位 %d 选择角色", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("全局角色池为空，返回0"); return 0; }
+    // 绘制为可点击列表
+    int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
     for (int i = 0; i < g_char_count; i++) {
-        char tmp[128]; snprintf(tmp,sizeof(tmp), " %2d: %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed); draw_line(tmp);
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+        draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
     }
-    draw_line("输入选择的索引 (在控制台输入):");
-    int sel = -1;
-    if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = 0; }
-    while(getchar()!='\n');
-    if (sel < 0 || sel >= g_char_count) sel = 0;
-    char chosen[128]; snprintf(chosen,sizeof(chosen), "选择: %s", g_all_characters[sel].name); draw_line(chosen);
-    return sel;
+    MOUSEMSG m;
+    while (1) {
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            for (int i = 0; i < g_char_count; i++) {
+                int rx = sx, ry = sy + i * (sh + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "选择: %s", g_all_characters[i].name); draw_line(chosen);
+                    return i;
+                }
+            }
+        }
+    }
 #else
     printf("\n[角色选择] 玩家 %d 为槽位 %d 选择角色\n", player_id, slot_number);
     if (g_char_count == 0) { printf("全局角色池为空，返回0\n"); return 0; }
@@ -242,20 +355,33 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
-    char buf[128]; snprintf(buf,sizeof(buf), "[卡牌构筑] 玩家 %d 选择第 %d 张卡牌 (输入 -1 结束)", player_id, current_deck_size + 1); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "[卡牌构筑] 玩家 %d 选择第 %d 张卡牌", player_id, current_deck_size + 1); draw_line(buf);
     if (g_card_count == 0) { draw_line("全局卡池为空，返回 -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
+    int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
     for (int i = 0; i < show; i++) {
-        print_card(&g_all_cards[i], i);
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+        draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
     }
-    draw_line("输入要加入的卡牌索引 (在控制台输入) :");
-    int sel = -2;
-    if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = -1; }
-    while(getchar()!='\n');
-    if (sel == -1) return -1;
-    if (sel < 0 || sel >= g_card_count) sel = 0;
-    char chosen[128]; snprintf(chosen,sizeof(chosen), "已选择: %s", g_all_cards[sel].name); draw_line(chosen);
-    return sel;
+    // 添加结束按钮
+    draw_button(cx + cw + 20, cy + show * (ch + 6), 120, 40, "结束构筑");
+    MOUSEMSG m;
+    while (1) {
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            for (int i = 0; i < show; i++) {
+                int rx = cx, ry = cy + i * (ch + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "已选择: %s", g_all_cards[i].name); draw_line(chosen);
+                    return i;
+                }
+            }
+            // 结束按钮
+            if (point_in_rect(m.x, m.y, cx + cw + 20, cy + show * (ch + 6), 120, 40)) {
+                return -1;
+            }
+        }
+    }
 #else
     printf("\n[卡牌构筑] 玩家 %d 选择第 %d 张卡牌 (输入 -1 结束)\n", player_id, current_deck_size + 1);
     if (g_card_count == 0) { printf("全局卡池为空，返回 -1\n"); return -1; }
@@ -275,6 +401,20 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 }
 
 int GetModeSelectionFromUI() {
+#ifdef USE_EASYX
+    reset_draw_y(); draw_line("主菜单：选择模式：");
+    int bx = 60, by = g_draw_y + 10, bw = 240, bh = 60;
+    draw_button(bx, by, bw, bh, "本地 PvP (默认)");
+    draw_button(bx, by + 90, bw, bh, "人机 PvE");
+    MOUSEMSG m;
+    while (1) {
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { draw_line("选择模式: PvP"); return MODE_PVP; }
+            if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { draw_line("选择模式: PvE"); return MODE_PVE; }
+        }
+    }
+#else
     printf("\n主菜单：选择模式 0=本地PvP 1=人机PvE (默认0): ");
     int m = MODE_PVP;
     if (scanf("%d", &m) != 1) { while(getchar()!='\n'); m = MODE_PVP; }
@@ -282,4 +422,5 @@ int GetModeSelectionFromUI() {
     if (m != MODE_PVE) m = MODE_PVP;
     printf("选择模式: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
     return m;
+#endif
 }
