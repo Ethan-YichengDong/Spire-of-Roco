@@ -55,9 +55,9 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
     draw_button(x, y, w, h, label);
-    // draw a small check mark at the right edge of the button
+    // draw a small tick mark at the right edge of the button (UTF-8 check glyph)
     settextcolor(BLACK);
-    outtextxy_utf8(x + w - 30, y + 6, "[X]");
+    outtextxy_utf8(x + w - 30, y + 6, "✔");
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
@@ -496,7 +496,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d selecting card %d", player_id, current_deck_size + 1); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
@@ -527,7 +527,7 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
         }
     }
 #else
-    printf("\n[Deck Build] Player %d selecting card %d (input -1 to finish)\n", player_id, current_deck_size + 1);
+    printf("\n[Deck Build] Player %d - Selected %d so far (input -1 to finish)\n", player_id, current_deck_size);
     if (g_card_count == 0) { printf("Global card pool empty, returning -1\n"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     for (int i = 0; i < show; i++) {
