@@ -252,15 +252,35 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                         for (int i = 0; i < p->hand_count; i++) {
                             int rx = hx, ry = hy + i * (hh + 8);
                             if (point_in_rect(m.x, m.y, rx, ry, hw, hh)) {
+                                Card* c = &p->hand[i];
+                                // 如果能量不足，给提示并忽略此次点击
+                                if (p->energy < c->energy_cost) {
+                                    char msg[128]; snprintf(msg, sizeof(msg), "能量不足: %s 需要 %d 点, 当前 %d/%d", c->name, c->energy_cost, p->energy, p->max_energy);
+                                    draw_line(msg);
+                                    break; // 结束 for 循环，等待下一次点击
+                                }
+                                // 构造动作并显示信息
                                 act.type = ACTION_PLAY_CARD;
                                 act.card_hand_idx = i;
                                 act.actor_id = player_id;
-                                Card* c = &p->hand[i];
+                                {
+                                    char ebuf[128];
+                                    snprintf(ebuf, sizeof(ebuf), "Play: %s  Cost:%d  Remaining Energy:%d/%d",
+                                             c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
+                                    draw_line(ebuf);
+                                }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
-                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮）
-                                    int tx = 30, ty = hy + p->hand_count * (hh + 8) + 20, tw = 140, th = 40;
+                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
+                                    int tx = 30, ty = hy + p->hand_count * (hh + 8) + 20, tw = 200, th = 40;
+                                    Character* target_team = NULL;
+                                    if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
+                                    else {
+                                        // 敌方队伍
+                                        if (player_id == state.p1.player_id) target_team = (Character*)state.p2.team;
+                                        else target_team = (Character*)state.p1.team;
+                                    }
                                     for (int t = 0; t < TEAM_SIZE; t++) {
-                                        char tb[64]; snprintf(tb, sizeof(tb), "Target %d", t);
+                                        char tb[128]; snprintf(tb, sizeof(tb), "Target %d: %s", t, target_team[t].name);
                                         draw_button(tx + t * (tw + 8), ty, tw, th, tb);
                                     }
                                     while (1) {
@@ -330,11 +350,25 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
             while(getchar()!='\n');
             if (idx < 0 || idx >= p->hand_count) { printf("索引越界\n"); continue; }
+            Card* c = &p->hand[idx];
+            if (p->energy < c->energy_cost) {
+                printf("能量不足: %s 需要 %d 点, 当前 %d/%d\n", c->name, c->energy_cost, p->energy, p->max_energy);
+                continue;
+            }
             act.type = ACTION_PLAY_CARD;
             act.card_hand_idx = idx;
             act.actor_id = player_id;
-            Card* c = &p->hand[idx];
+            printf("出牌: %s  Cost:%d  剩余能量:%d/%d\n", c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
             if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
+                // 列出可选目标并显示名字
+                Player* enemy = (player_id == state.p1.player_id) ? (Player*)&state.p2 : (Player*)&state.p1;
+                if (c->target_type == TARGET_ENEMY_SINGLE) {
+                    printf("可选目标(敌方):\n");
+                    for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, enemy->team[t].name);
+                } else {
+                    printf("可选目标(己方):\n");
+                    for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, p->team[t].name);
+                }
                 printf("请选择目标索引 (0..%d): ", TEAM_SIZE - 1);
                 int tid = -1;
                 if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
