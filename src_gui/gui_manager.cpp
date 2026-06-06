@@ -6,9 +6,37 @@
 #ifdef USE_EASYX
 #include <graphics.h>
 #include <conio.h>
+#include <windows.h>
+#include <string>
 static int g_draw_y = 10;
 static void reset_draw_y() { g_draw_y = 10; cleardevice(); }
-static void draw_line(const char* s) { outtextxy(10, g_draw_y, s); g_draw_y += 24; }
+
+// Convert UTF-8 C string to current ANSI code page string
+static std::string utf8_to_acp_str(const char* utf8) {
+    if (!utf8) return std::string();
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (wlen == 0) return std::string();
+    wchar_t* wbuf = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wbuf, wlen);
+    int alen = WideCharToMultiByte(CP_ACP, 0, wbuf, -1, NULL, 0, NULL, NULL);
+    char* abuf = (char*)malloc(alen);
+    WideCharToMultiByte(CP_ACP, 0, wbuf, -1, abuf, alen, NULL, NULL);
+    std::string s(abuf);
+    free(wbuf);
+    free(abuf);
+    return s;
+}
+
+// Helper wrappers that accept UTF-8 literals
+static void outtextxy_utf8(int x, int y, const char* utf8) {
+    std::string s = utf8_to_acp_str(utf8);
+    outtextxy(x, y, s.c_str());
+}
+static void settextstyle_utf8(int height, int width, const char* utf8Name) {
+    std::string s = utf8_to_acp_str(utf8Name);
+    settextstyle(height, width, s.c_str());
+}
+static void draw_line(const char* s) { outtextxy_utf8(10, g_draw_y, s); g_draw_y += 24; }
 #ifdef USE_EASYX
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
@@ -42,7 +70,7 @@ void InitGUI() {
     initgraph(800,600);
     setbkcolor(WHITE);
     cleardevice();
-    settextstyle(20,0,"宋体");
+    settextstyle_utf8(20,0,"宋体");
 #else
     // 控制台不需要特别初始化
 #endif
