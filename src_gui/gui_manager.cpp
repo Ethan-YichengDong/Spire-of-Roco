@@ -52,6 +52,14 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
     outtextxy_utf8(x + 6, y + 6, label);
 }
 
+// Draw a button and mark it as checked (used to indicate a confirmed selection)
+static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
+    draw_button(x, y, w, h, label);
+    // draw a small check mark at the right edge of the button
+    settextcolor(BLACK);
+    outtextxy_utf8(x + w - 30, y + 6, "[X]");
+}
+
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
     MOUSEMSG m;
     while (1) {
@@ -283,6 +291,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 if (p->hand_count == 0) { draw_line("Hand empty, cannot play."); continue; }
                 // 清理并显示手牌为可点按钮（避免文本重叠）
                 reset_draw_y();
+                draw_team_hp_panel(&state);
                 draw_line("Select a hand card:");
                 int hx = 260, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
@@ -311,7 +320,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                     char ebuf[128];
                                     snprintf(ebuf, sizeof(ebuf), "Play: %s  Cost:%d  Remaining Energy:%d/%d",
                                              c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
-                                    draw_line(ebuf);
+                                    draw_overlay_message(ebuf);
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                                     // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
@@ -351,6 +360,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             else if (point_in_rect(m.x, m.y, bx, by + 120, bw, bh)) {
                 // 清理并显示可切换角色（避免文本重叠）
                 reset_draw_y();
+                draw_team_hp_panel(&state);
                 draw_line("Select a character to switch:");
                 int sx = 260, sy = g_draw_y + 10, sw = 300, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
@@ -456,12 +466,15 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
             for (int i = 0; i < g_char_count; i++) {
-                int rx = sx, ry = sy + i * (sh + 6);
-                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_characters[i].name); draw_line(chosen);
-                    return i;
+                    int rx = sx, ry = sy + i * (sh + 6);
+                    if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
+                        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+                        draw_button_with_check(rx, ry, sw, sh, tmp);
+                        char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_characters[i].name); draw_overlay_message(chosen);
+                        Sleep(300);
+                        return i;
+                    }
                 }
-            }
         }
     }
 #else
@@ -498,12 +511,15 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
             for (int i = 0; i < show; i++) {
-                int rx = cx, ry = cy + i * (ch + 6);
-                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_line(chosen);
-                    return i;
+                    int rx = cx, ry = cy + i * (ch + 6);
+                    if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
+                        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+                        draw_button_with_check(rx, ry, cw, ch, tmp);
+                        char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_overlay_message(chosen);
+                        Sleep(300);
+                        return i;
+                    }
                 }
-            }
             // 结束按钮
             if (point_in_rect(m.x, m.y, cx + cw + 20, cy + show * (ch + 6), 120, 40)) {
                 return -1;
@@ -538,8 +554,8 @@ int GetModeSelectionFromUI() {
     while (1) {
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { draw_line("Mode: PvP"); return MODE_PVP; }
-            if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { draw_line("Mode: PvE"); return MODE_PVE; }
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { draw_button_with_check(bx, by, bw, bh, "Local PvP (default)"); draw_overlay_message("Mode: PvP"); Sleep(200); return MODE_PVP; }
+            if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { draw_button_with_check(bx, by + 90, bw, bh, "AI PvE"); draw_overlay_message("Mode: PvE"); Sleep(200); return MODE_PVE; }
         }
     }
 #else
