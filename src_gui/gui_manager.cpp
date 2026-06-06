@@ -54,13 +54,17 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
 
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
-    // Draw filled light-gray button to indicate selection (avoids overlay text and UTF8 issues)
-    setfillcolor(LIGHTGRAY);
+    // Draw normal button background
+    setfillcolor(WHITE);
     setlinecolor(BLACK);
     fillrectangle(x, y, x + w, y + h);
     rectangle(x, y, x + w, y + h);
+    // Draw a small left marker (green) so the text is not occluded and no flicker
+    setfillcolor(GREEN);
+    fillrectangle(x + 6, y + 6, x + 22, y + h - 6);
+    // Draw label shifted right to avoid marker
     settextcolor(BLACK);
-    outtextxy_utf8(x + 6, y + 6, label);
+    outtextxy_utf8(x + 30, y + 6, label);
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
