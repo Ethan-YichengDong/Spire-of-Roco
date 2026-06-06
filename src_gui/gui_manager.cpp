@@ -455,26 +455,41 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
-    // 绘制为可点击列表
+    // Draw clickable list but keep selection until confirmed
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
-    for (int i = 0; i < g_char_count; i++) {
-        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-        draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
-    }
+    int confirm_x = sx + sw + 20, confirm_y = sy + g_char_count * (sh + 6);
+    int selected_idx = -1;
     MOUSEMSG m;
     while (1) {
+        // redraw list with selection marker
+        for (int i = 0; i < g_char_count; i++) {
+            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+            if (i == selected_idx) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+            else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+        }
+        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
             for (int i = 0; i < g_char_count; i++) {
-                    int rx = sx, ry = sy + i * (sh + 6);
-                    if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
-                        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-                        draw_button_with_check(rx, ry, sw, sh, tmp);
-                        char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_characters[i].name); draw_overlay_message(chosen);
-                        Sleep(300);
-                        return i;
-                    }
+                int rx = sx, ry = sy + i * (sh + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
+                    selected_idx = i;
+                    char overlay[128]; snprintf(overlay, sizeof(overlay), "Selected: %s", g_all_characters[i].name); draw_overlay_message(overlay);
+                    break;
                 }
+            }
+            // confirm button
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                if (selected_idx >= 0) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_characters[selected_idx].name); draw_overlay_message(chosen);
+                    Sleep(200);
+                    return selected_idx;
+                } else {
+                    draw_overlay_message("No character selected");
+                    Sleep(200);
+                }
+            }
         }
     }
 #else
@@ -500,29 +515,44 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
-    for (int i = 0; i < show; i++) {
-        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-        draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
-    }
-    // add finish button
-    draw_button(cx + cw + 20, cy + show * (ch + 6), 120, 40, "Finish Build");
+    int confirm_x = cx + cw + 20, confirm_y = cy + show * (ch + 6);
+    int selected_idx = -1;
     MOUSEMSG m;
     while (1) {
+        // redraw list with selection marker
+        for (int i = 0; i < show; i++) {
+            char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+            if (i == selected_idx) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
+            else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+        }
+        // add finish and confirm buttons
+        draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+        draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
             for (int i = 0; i < show; i++) {
-                    int rx = cx, ry = cy + i * (ch + 6);
-                    if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
-                        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-                        draw_button_with_check(rx, ry, cw, ch, tmp);
-                        char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_overlay_message(chosen);
-                        Sleep(300);
-                        return i;
-                    }
+                int rx = cx, ry = cy + i * (ch + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
+                    selected_idx = i;
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_overlay_message(chosen);
+                    break;
                 }
-            // 结束按钮
-            if (point_in_rect(m.x, m.y, cx + cw + 20, cy + show * (ch + 6), 120, 40)) {
+            }
+            // finish button
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 return -1;
+            }
+            // confirm button
+            if (point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+                if (selected_idx >= 0) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message(chosen);
+                    Sleep(200);
+                    return selected_idx;
+                } else {
+                    draw_overlay_message("No card selected");
+                    Sleep(200);
+                }
             }
         }
     }
@@ -548,14 +578,30 @@ int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
     reset_draw_y(); draw_line("Main Menu: Select mode:");
     int bx = 60, by = g_draw_y + 10, bw = 240, bh = 60;
-    draw_button(bx, by, bw, bh, "Local PvP (default)");
-    draw_button(bx, by + 90, bw, bh, "AI PvE");
+    int confirm_x = bx + bw + 20, confirm_y = by + 120;
+    int selected_mode = -1;
     MOUSEMSG m;
     while (1) {
+        // redraw options
+        if (selected_mode == MODE_PVP) draw_button_with_check(bx, by, bw, bh, "Local PvP (default)");
+        else draw_button(bx, by, bw, bh, "Local PvP (default)");
+        if (selected_mode == MODE_PVE) draw_button_with_check(bx, by + 90, bw, bh, "AI PvE");
+        else draw_button(bx, by + 90, bw, bh, "AI PvE");
+        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { draw_button_with_check(bx, by, bw, bh, "Local PvP (default)"); draw_overlay_message("Mode: PvP"); Sleep(200); return MODE_PVP; }
-            if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { draw_button_with_check(bx, by + 90, bw, bh, "AI PvE"); draw_overlay_message("Mode: PvE"); Sleep(200); return MODE_PVE; }
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; draw_overlay_message("Selected: PvP"); }
+            else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; draw_overlay_message("Selected: PvE"); }
+            else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                if (selected_mode == MODE_PVP || selected_mode == MODE_PVE) {
+                    char msg[64]; snprintf(msg, sizeof(msg), "Mode confirmed: %s", (selected_mode == MODE_PVE) ? "PvE" : "PvP");
+                    draw_overlay_message(msg); Sleep(200);
+                    return selected_mode;
+                } else {
+                    draw_overlay_message("No mode selected"); Sleep(200);
+                }
+            }
         }
     }
 #else
