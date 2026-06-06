@@ -145,23 +145,23 @@ void RenderGameBoard(GameState state) {
 
     draw_line("========================================");
 #else
-    printf("\n=== 游戏面板 (回合:%d) 当前行动: 玩家 %d ===\n", state.round_count, state.current_turn);
+    printf("\n=== Game Board (Round:%d) Current Turn: Player %d ===\n", state.round_count, state.current_turn);
 
-    printf("-- 玩家1: %s --\n", state.p1.name);
+    printf("-- Player1: %s --\n", state.p1.name);
     printf(" Active: "); print_character(&state.p1.team[state.p1.active_idx]);
-    printf(" Energy: %d/%d  手牌:%d  抽牌堆:%d 弃牌堆:%d\n", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count);
+    printf(" Energy: %d/%d  Hand:%d  Draw:%d Discard:%d\n", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count);
     if (state.p1.hand_count > 0) {
-        printf(" 手牌:\n");
+        printf(" Hand:\n");
         for (int i = 0; i < state.p1.hand_count; i++) {
             print_card(&state.p1.hand[i], i);
         }
     }
 
-    printf("\n-- 玩家2: %s --\n", state.p2.name);
+    printf("\n-- Player2: %s --\n", state.p2.name);
     printf(" Active: "); print_character(&state.p2.team[state.p2.active_idx]);
-    printf(" Energy: %d/%d  手牌:%d  抽牌堆:%d 弃牌堆:%d\n", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count);
+    printf(" Energy: %d/%d  Hand:%d  Draw:%d Discard:%d\n", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count);
     if (state.p2.hand_count > 0) {
-        printf(" 手牌:\n");
+        printf(" Hand:\n");
         for (int i = 0; i < state.p2.hand_count; i++) {
             print_card(&state.p2.hand[i], i);
         }
@@ -200,8 +200,8 @@ void ShowTurnTransitionMask(int player_id) {
     char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_line(buf);
     wait_for_enter("Press any key to continue...");
 #else
-    printf("\n---- 轮到 玩家 %d ----\n", player_id);
-    wait_for_enter("按回车继续...\n");
+    printf("\n---- Turn: Player %d ----\n", player_id);
+    wait_for_enter("Press Enter to continue...\n");
 #endif
 }
 
@@ -253,11 +253,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                             int rx = hx, ry = hy + i * (hh + 8);
                             if (point_in_rect(m.x, m.y, rx, ry, hw, hh)) {
                                 Card* c = &p->hand[i];
-                                // 如果能量不足，给提示并忽略此次点击
+                                // If not enough energy, show message and ignore this click
                                 if (p->energy < c->energy_cost) {
-                                    char msg[128]; snprintf(msg, sizeof(msg), "能量不足: %s 需要 %d 点, 当前 %d/%d", c->name, c->energy_cost, p->energy, p->max_energy);
+                                    char msg[128]; snprintf(msg, sizeof(msg), "Not enough energy: %s requires %d, current %d/%d", c->name, c->energy_cost, p->energy, p->max_energy);
                                     draw_line(msg);
-                                    break; // 结束 for 循环，等待下一次点击
+                                    break; // end for loop and wait for next click
                                 }
                                 // 构造动作并显示信息
                                 act.type = ACTION_PLAY_CARD;
@@ -332,65 +332,65 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
         }
     }
 #else
-    // 退回控制台实现
+    // fallback console implementation
     while (1) {
-        printf("\n玩家 %d 操作选择：\n", player_id);
-        printf(" 0: 结束回合\n 1: 出牌\n 2: 切换角色\n");
-        printf("\n请输入选项编号: ");
+        printf("\nPlayer %d - choose action:\n", player_id);
+        printf(" 0: End Turn\n 1: Play Card\n 2: Switch Character\n");
+        printf("\nEnter option number: ");
         int opt = -1;
         if (scanf("%d", &opt) != 1) { while(getchar()!='\n'); opt = -1; }
-        // 清理换行
+        // consume remaining newline
         int ch = getchar(); if (ch != '\n' && ch != EOF) while (getchar()!='\n');
 
         if (opt == 0) { act.type = ACTION_END_TURN; return act; }
         else if (opt == 1) {
-            if (p->hand_count == 0) { printf("手牌为空，无法出牌。\n"); continue; }
-            printf("请选择手牌索引 (0..%d): ", p->hand_count - 1);
+            if (p->hand_count == 0) { printf("Hand empty, cannot play.\n"); continue; }
+            printf("Choose hand index (0..%d): ", p->hand_count - 1);
             int idx = -1;
-            if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+            if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
             while(getchar()!='\n');
-            if (idx < 0 || idx >= p->hand_count) { printf("索引越界\n"); continue; }
+            if (idx < 0 || idx >= p->hand_count) { printf("Index out of range\n"); continue; }
             Card* c = &p->hand[idx];
             if (p->energy < c->energy_cost) {
-                printf("能量不足: %s 需要 %d 点, 当前 %d/%d\n", c->name, c->energy_cost, p->energy, p->max_energy);
+                printf("Not enough energy: %s requires %d, current %d/%d\n", c->name, c->energy_cost, p->energy, p->max_energy);
                 continue;
             }
             act.type = ACTION_PLAY_CARD;
             act.card_hand_idx = idx;
             act.actor_id = player_id;
-            printf("出牌: %s  Cost:%d  剩余能量:%d/%d\n", c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
+            printf("Play: %s  Cost:%d  Remaining Energy:%d/%d\n", c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
             if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
-                // 列出可选目标并显示名字
+                // list available targets with names
                 Player* enemy = (player_id == state.p1.player_id) ? (Player*)&state.p2 : (Player*)&state.p1;
                 if (c->target_type == TARGET_ENEMY_SINGLE) {
-                    printf("可选目标(敌方):\n");
+                    printf("Available targets (enemy):\n");
                     for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, enemy->team[t].name);
                 } else {
-                    printf("可选目标(己方):\n");
+                    printf("Available targets (self):\n");
                     for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, p->team[t].name);
                 }
-                printf("请选择目标索引 (0..%d): ", TEAM_SIZE - 1);
+                printf("Please choose target index (0..%d): ", TEAM_SIZE - 1);
                 int tid = -1;
-                if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+                if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
                 while(getchar()!='\n');
                 act.target_idx = tid;
             } else { act.target_idx = 0; }
             return act;
         }
         else if (opt == 2) {
-            printf("可切换的队伍成员:\n");
+            printf("Switchable team members:\n");
             for (int i = 0; i < TEAM_SIZE; i++) { printf(" %d: ", i); print_character(&p->team[i]); }
-            printf("请选择切换到的索引 (0..%d): ", TEAM_SIZE - 1);
+            printf("Choose index to switch to (0..%d): ", TEAM_SIZE - 1);
             int s = -1;
-            if (scanf("%d", &s) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+            if (scanf("%d", &s) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
             while(getchar()!='\n');
-            if (s < 0 || s >= TEAM_SIZE || !p->team[s].is_alive) { printf("无效的索引或角色已阵亡\n"); continue; }
+            if (s < 0 || s >= TEAM_SIZE || !p->team[s].is_alive) { printf("Invalid index or character is dead\n"); continue; }
             act.type = ACTION_SWITCH_CHAR;
             act.switch_to_idx = s;
             act.actor_id = player_id;
             return act;
         }
-        else { printf("未知选项，请重试。\n"); }
+        else { printf("Unknown option, please try again.\n"); }
     }
 #endif
 }
@@ -421,17 +421,17 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
         }
     }
 #else
-    printf("\n[角色选择] 玩家 %d 为槽位 %d 选择角色\n", player_id, slot_number);
-    if (g_char_count == 0) { printf("全局角色池为空，返回0\n"); return 0; }
+    printf("\n[Character Select] Player %d choose for slot %d\n", player_id, slot_number);
+    if (g_char_count == 0) { printf("Global character pool empty, returning 0\n"); return 0; }
     for (int i = 0; i < g_char_count; i++) {
         printf(" %2d: %s (ID:%d) HP:%d Speed:%d\n", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
     }
-    printf("输入选择的索引 (0..%d): ", g_char_count - 1);
+    printf("Enter selection index (0..%d): ", g_char_count - 1);
     int sel = -1;
     if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = 0; }
     while(getchar()!='\n');
     if (sel < 0 || sel >= g_char_count) sel = 0;
-    printf("选择: %s\n", g_all_characters[sel].name);
+    printf("Selected: %s\n", g_all_characters[sel].name);
     return sel;
 #endif
 }
@@ -467,19 +467,19 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
         }
     }
 #else
-    printf("\n[卡牌构筑] 玩家 %d 选择第 %d 张卡牌 (输入 -1 结束)\n", player_id, current_deck_size + 1);
-    if (g_card_count == 0) { printf("全局卡池为空，返回 -1\n"); return -1; }
+    printf("\n[Deck Build] Player %d selecting card %d (input -1 to finish)\n", player_id, current_deck_size + 1);
+    if (g_card_count == 0) { printf("Global card pool empty, returning -1\n"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     for (int i = 0; i < show; i++) {
         print_card(&g_all_cards[i], i);
     }
-    printf("输入要加入的卡牌索引 (0..%d) 或 -1 结束: ", g_card_count - 1);
+    printf("Enter index to add (0..%d) or -1 to finish: ", g_card_count - 1);
     int sel = -2;
     if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = -1; }
     while(getchar()!='\n');
     if (sel == -1) return -1;
     if (sel < 0 || sel >= g_card_count) sel = 0;
-    printf("已选择: %s\n", g_all_cards[sel].name);
+    printf("Selected: %s\n", g_all_cards[sel].name);
     return sel;
 #endif
 }
@@ -499,12 +499,12 @@ int GetModeSelectionFromUI() {
         }
     }
 #else
-    printf("\n主菜单：选择模式 0=本地PvP 1=人机PvE (默认0): ");
+    printf("\nMain Menu: Select mode 0=Local PvP 1=AI PvE (default 0): ");
     int m = MODE_PVP;
     if (scanf("%d", &m) != 1) { while(getchar()!='\n'); m = MODE_PVP; }
     while(getchar()!='\n');
     if (m != MODE_PVE) m = MODE_PVP;
-    printf("选择模式: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
+    printf("Mode selected: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
     return m;
 #endif
 }
