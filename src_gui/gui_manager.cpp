@@ -283,7 +283,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     reset_draw_y();
     // render side panel with HP so it's always visible
     draw_team_hp_panel(&state);
-    draw_line("Please choose action:");
+    snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); draw_line(buf);
     int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
     draw_button(bx, by, bw, bh, "End Turn");
     draw_button(bx, by + 60, bw, bh, "Play Card");
@@ -299,7 +299,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 // 清理并显示手牌为可点按钮（避免文本重叠）
                 reset_draw_y();
                 draw_team_hp_panel(&state);
-                draw_line("Select a hand card:");
+                snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
                 int hx = 260, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
@@ -368,8 +368,8 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 // 清理并显示可切换角色（避免文本重叠）
                 reset_draw_y();
                 draw_team_hp_panel(&state);
-                draw_line("Select a character to switch:");
-                int sx = 260, sy = g_draw_y + 10, sw = 300, sh = 48;
+                snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); draw_line(buf);
+                int sx = 200, sy = g_draw_y + 10, sw = 300, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
