@@ -284,7 +284,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     reset_draw_y();
     // render side panel with HP so it's always visible
     draw_team_hp_panel(&state);
-    snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); draw_line(buf);
+    snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
     int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
     draw_button(bx, by, bw, bh, "End Turn");
     draw_button(bx, by + 60, bw, bh, "Play Card");
@@ -332,7 +332,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                                     // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
-                                    int tx = 30, ty = hy + p->hand_count * (hh + 8) + 20, tw = 200, th = 40;
+                                    int tx = 30, ty = 40, tw = 200, th = 40;
                                     Character* target_team = NULL;
                                     if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
                                     else {
@@ -369,7 +369,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 // 清理并显示可切换角色（避免文本重叠）
                 reset_draw_y();
                 draw_team_hp_panel(&state);
-                snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); draw_line(buf);
+                snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
                 int sx = 200, sy = g_draw_y + 10, sw = 300, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
@@ -397,6 +397,8 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     // fallback console implementation
     while (1) {
         printf("\nPlayer %d - choose action:\n", player_id);
+        printf("Current active:\n");
+        print_character(&p->team[p->active_idx]);
         printf(" 0: End Turn\n 1: Play Card\n 2: Switch Character\n");
         printf("\nEnter option number: ");
         int opt = -1;
@@ -440,6 +442,8 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             return act;
         }
         else if (opt == 2) {
+            printf("Current active:\n");
+            print_character(&p->team[p->active_idx]);
             printf("Switchable team members:\n");
             for (int i = 0; i < TEAM_SIZE; i++) { printf(" %d: ", i); print_character(&p->team[i]); }
             printf("Choose index to switch to (0..%d): ", TEAM_SIZE - 1);
@@ -462,7 +466,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
     // legacy single-select preserved for compatibility
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
@@ -527,7 +531,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
@@ -674,8 +678,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
         if (need_redraw) {
             reset_draw_y();
             draw_team_hp_panel(NULL);
-            char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select);
-            draw_line(header);
+            char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select); settextcolor(BLACK); draw_line(header);
             for (int i = 0; i < show; i++) {
                 char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
                 int x_label = cx;
@@ -691,7 +694,6 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
             }
             // footer buttons
             draw_button(confirm_x, confirm_y, 140, 40, "End Building");
-            draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
             // show total at bottom overlay as real-time statistic
             char tbuf[64]; snprintf(tbuf, sizeof(tbuf), "Total cards: %d/%d", total, max_select); draw_overlay_message(tbuf);
             need_redraw = 0;
@@ -716,13 +718,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
                 }
             }
             if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
-                // End Building: treat as cancel/finish without adding if none
-                free(qty);
-                if (out_count) *out_count = 0;
-                return 0;
-            }
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
-                // Confirm: flatten quantities into out_indices up to max_select
+                // End Building: finalize selection and return quantities
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
                     for (int k = 0; k < qty[i] && count < max_select; k++) {
