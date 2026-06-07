@@ -95,26 +95,26 @@ static void draw_overlay_message(const char* utf8msg) {
 // their HP is always visible during the turn.
 static void draw_team_hp_panel(const GameState* st) {
     if (!st) return;
-    int x = 520, y = 10;
+    int x = 515, y = 10; // slightly left and a bit wider panel
     char buf[128];
     setfillcolor(WHITE);
     setlinecolor(BLACK);
-    // background for panel
-    fillrectangle(x - 8, y - 4, 780, 220);
-    rectangle(x - 8, y - 4, 780, 220);
+    // background for panel (widened)
+    fillrectangle(x - 8, y - 4, 800, 240);
+    rectangle(x - 8, y - 4, 800, 240);
     settextcolor(BLACK);
     snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
-    outtextxy_utf8(x, y, buf); y += 22;
+    outtextxy_utf8(x + 6, y, buf); y += 22;
     for (int i = 0; i < TEAM_SIZE; i++) {
         snprintf(buf, sizeof(buf), " P1[%d] %s  HP:%d/%d", i, st->p1.team[i].name, st->p1.team[i].hp, st->p1.team[i].max_hp);
-        outtextxy_utf8(x, y, buf); y += 20;
+        outtextxy_utf8(x + 6, y, buf); y += 22;
     }
     y += 6;
     snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
-    outtextxy_utf8(x, y, buf); y += 22;
+    outtextxy_utf8(x + 6, y, buf); y += 22;
     for (int i = 0; i < TEAM_SIZE; i++) {
         snprintf(buf, sizeof(buf), " P2[%d] %s  HP:%d/%d", i, st->p2.team[i].name, st->p2.team[i].hp, st->p2.team[i].max_hp);
-        outtextxy_utf8(x, y, buf); y += 20;
+        outtextxy_utf8(x + 6, y, buf); y += 22;
     }
 }
 
