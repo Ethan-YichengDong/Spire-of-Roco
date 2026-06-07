@@ -278,6 +278,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     } else {
         p = (player_id == 1) ? (Player*)&state.p1 : (Player*)&state.p2;
     }
+    char buf[256];
 
 #ifdef USE_EASYX
     reset_draw_y();
@@ -461,7 +462,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
     // legacy single-select preserved for compatibility
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
@@ -526,7 +527,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Character Select - Multi] Player %d - select up to %d", player_id, max_select); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
     int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
@@ -657,27 +658,42 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build - Multi] Player %d - select up to %d", player_id, max_select); draw_line(buf);
+    char buf[256]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Deck Building (max %d cards)", player_id, max_select); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int show = g_card_count < 20 ? g_card_count : 20;
-    int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
-    int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
-    // selection flags
-    int* selected = (int*)malloc(sizeof(int) * show);
-    memset(selected, 0, sizeof(int) * show);
+    int show = g_card_count < 8 ? g_card_count : 8; // limit UI to 8 unique card types per spec
+    int cx = 30, cy = g_draw_y + 10, card_w = 300, card_h = 36;
+    int minus_w = 40, qty_w = 60, plus_w = 40;
+    int line_h = card_h + 6;
+    int confirm_x = cx, confirm_y = cy + show * line_h + 60;
+    int* qty = (int*)calloc(show, sizeof(int));
+    if (!qty) { if (out_count) *out_count = 0; return 0; }
+    int total = 0;
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
             reset_draw_y();
             draw_team_hp_panel(NULL);
+            char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select);
+            draw_line(header);
             for (int i = 0; i < show; i++) {
                 char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-                if (selected[i]) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
-                else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+                int x_label = cx;
+                int x_minus = cx + card_w + 8;
+                int x_qty = x_minus + minus_w + 8;
+                int x_plus = x_qty + qty_w + 8;
+                // draw card label
+                draw_button(x_label, cy + i * line_h, card_w, card_h, tmp);
+                // draw minus, qty, plus controls
+                char mbuf[16]; snprintf(mbuf, sizeof(mbuf), "-"); draw_button(x_minus, cy + i * line_h, minus_w, card_h, mbuf);
+                char qbuf[32]; snprintf(qbuf, sizeof(qbuf), "%d", qty[i]); draw_button(x_qty, cy + i * line_h, qty_w, card_h, qbuf);
+                char pbuf[16]; snprintf(pbuf, sizeof(pbuf), "+"); draw_button(x_plus, cy + i * line_h, plus_w, card_h, pbuf);
             }
-            draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+            // footer buttons
+            draw_button(confirm_x, confirm_y, 140, 40, "End Building");
             draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+            // show total at bottom overlay as real-time statistic
+            char tbuf[64]; snprintf(tbuf, sizeof(tbuf), "Total cards: %d/%d", total, max_select); draw_overlay_message(tbuf);
             need_redraw = 0;
         }
 
@@ -685,45 +701,78 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                int rx = cx, ry = cy + i * (ch + 6);
-                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
-                    selected[i] = !selected[i];
-                    need_redraw = 1;
-                    handled = 1;
-                    break;
+                int x_minus = cx + card_w + 8;
+                int x_qty = x_minus + minus_w + 8;
+                int x_plus = x_qty + qty_w + 8;
+                int ry = cy + i * line_h;
+                if (point_in_rect(m.x, m.y, x_minus, ry, minus_w, card_h)) {
+                    if (qty[i] > 0) { qty[i]--; total--; }
+                    need_redraw = 1; handled = 1; break;
+                }
+                if (point_in_rect(m.x, m.y, x_plus, ry, plus_w, card_h)) {
+                    if (total < max_select) { qty[i]++; total++; }
+                    else draw_overlay_message("Cannot exceed deck limit");
+                    need_redraw = 1; handled = 1; break;
                 }
             }
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
-                // Finish Build: treat as cancel
-                free(selected);
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
+                // End Building: treat as cancel/finish without adding if none
+                free(qty);
                 if (out_count) *out_count = 0;
                 return 0;
             }
             if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+                // Confirm: flatten quantities into out_indices up to max_select
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
-                    if (selected[i]) out_indices[count++] = i;
+                    for (int k = 0; k < qty[i] && count < max_select; k++) {
+                        out_indices[count++] = i;
+                    }
                 }
-                free(selected);
+                free(qty);
                 if (out_count) *out_count = count;
                 return count;
             }
         }
     }
 #else
-    // Console fallback: allow entering multiple indices separated by spaces, end with -1
-    printf("\n[Deck Build - Multi] Player %d - select up to %d, enter indices separated by spaces, -1 to finish:\n", player_id, max_select);
+    // Console fallback: simple text controls
+    printf("\n[Deck Build] Player %d - Deck Building (max %d cards)\n", player_id, max_select);
     if (g_card_count == 0) { printf("Global card pool empty, returning 0\n"); if (out_count) *out_count = 0; return 0; }
-    int show = g_card_count < 20 ? g_card_count : 20;
-    for (int i = 0; i < show; i++) { print_card(&g_all_cards[i], i); }
-    int idx = -2; int count = 0;
-    while (count < max_select) {
-        if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); break; }
-        if (idx == -1) break;
-        if (idx < 0 || idx >= g_card_count) continue;
-        out_indices[count++] = idx;
+    int show = g_card_count < 8 ? g_card_count : 8;
+    int* qty = (int*)calloc(show, sizeof(int));
+    if (!qty) { if (out_count) *out_count = 0; return 0; }
+    int total = 0;
+    while (1) {
+        printf("Current selection (%d/%d):\n", total, max_select);
+        for (int i = 0; i < show; i++) {
+            printf(" %2d: %s  qty=%d\n", i, g_all_cards[i].name, qty[i]);
+        }
+        printf("Commands: +<index> to add, -<index> to remove, f to finish, e to end building\n");
+        char cmd[64];
+        if (!fgets(cmd, sizeof(cmd), stdin)) break;
+        if (cmd[0] == 'f') break;
+        if (cmd[0] == 'e') { free(qty); if (out_count) *out_count = 0; return 0; }
+        if ((cmd[0] == '+' || cmd[0] == '-') ) {
+            int idx = atoi(cmd + 1);
+            if (idx < 0 || idx >= show) { printf("Invalid index\n"); continue; }
+            if (cmd[0] == '+') {
+                if (total < max_select) { qty[idx]++; total++; }
+                else printf("Cannot exceed deck limit\n");
+            } else {
+                if (qty[idx] > 0) { qty[idx]--; total--; }
+                else printf("Quantity already 0\n");
+            }
+            continue;
+        }
+        printf("Unknown command\n");
     }
-    while(getchar()!='\n');
+    // flatten quantities into out_indices
+    int count = 0;
+    for (int i = 0; i < show && count < max_select; i++) {
+        for (int k = 0; k < qty[i] && count < max_select; k++) out_indices[count++] = i;
+    }
+    free(qty);
     if (out_count) *out_count = count;
     return count;
 #endif
