@@ -99,9 +99,9 @@ static void draw_team_hp_panel(const GameState* st) {
     char buf[128];
     setfillcolor(WHITE);
     setlinecolor(BLACK);
-    // background for panel
-    fillrectangle(x - 8, y - 4, 760, 220);
-    rectangle(x - 8, y - 4, 760, 220);
+    // background for panel (slightly extended to the right)
+    fillrectangle(x - 8, y - 4, 765, 220);
+    rectangle(x - 8, y - 4, 765, 220);
     settextcolor(BLACK);
     snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
     outtextxy_utf8(x + 6, y, buf); y += 22;
@@ -303,7 +303,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
                 // show current active character info
                 draw_line(" Active: "); print_character(&p->team[p->active_idx]);
-                int hx = 140, hy = g_draw_y + 10, hw = 220, hh = 40;
+                int hx = 160, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
