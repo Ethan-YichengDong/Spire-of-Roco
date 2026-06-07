@@ -332,7 +332,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                                     // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
-                                    int tx = 30, ty = 40, tw = 200, th = 40;
+                                    int tx = 540, ty = 230, tw = 220, th = 40;
                                     Character* target_team = NULL;
                                     if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
                                     else {
@@ -342,14 +342,15 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                     }
                                     for (int t = 0; t < TEAM_SIZE; t++) {
                                         char tb[128]; snprintf(tb, sizeof(tb), "Target %d: %s", t, target_team[t].name);
-                                        draw_button(tx + t * (tw + 8), ty, tw, th, tb);
+                                        draw_button(tx, ty + t * (th + 8), tw, th, tb);
                                     }
                                     while (1) {
                                         m = GetMouseMsg();
                                         if (m.uMsg == WM_LBUTTONDOWN) {
                                             for (int t = 0; t < TEAM_SIZE; t++) {
-                                                int rx2 = tx + t * (tw + 8);
-                                                if (point_in_rect(m.x, m.y, rx2, ty, tw, th)) {
+                                                int rx2 = tx;
+                                                int ry2 = ty + t * (th + 8);
+                                                if (point_in_rect(m.x, m.y, rx2, ry2, tw, th)) {
                                                     act.target_idx = t;
                                                     return act;
                                                 }
@@ -718,7 +719,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
                 }
             }
             if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
-                // End Building: finalize selection and return quantities
+                // End Building: finalize selection and return negative count to signal engine to stop further rounds
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
                     for (int k = 0; k < qty[i] && count < max_select; k++) {
@@ -727,7 +728,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
                 }
                 free(qty);
                 if (out_count) *out_count = count;
-                return count;
+                return -count; // negative indicates finalize
             }
         }
     }

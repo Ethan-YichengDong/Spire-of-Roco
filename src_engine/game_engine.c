@@ -313,6 +313,7 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
 static void BuildDeckPhase(Player* player, int player_id, int mode) {
     while (player->draw_count < MAX_DECK_SIZE) {
         int picks[MAX_DECK_SIZE]; int pick_count = 0;
+        int finalize = 0;
         if (player_id == 2 && mode == MODE_PVE) {
             // PvE: AI selects remaining cards (placeholder logic)
             if (player->draw_count >= 16) break;
@@ -322,7 +323,9 @@ static void BuildDeckPhase(Player* player, int player_id, int mode) {
             continue;
         } else {
             // Let player pick multiple cards at once
-            pick_count = SelectMultipleCardsFromUI(player_id, MAX_DECK_SIZE - player->draw_count, picks, &pick_count);
+            int raw_ret = SelectMultipleCardsFromUI(player_id, MAX_DECK_SIZE - player->draw_count, picks, &pick_count);
+            if (raw_ret < 0) { finalize = 1; pick_count = -raw_ret; }
+            else pick_count = raw_ret;
         }
 
         if (pick_count <= 0) {
@@ -339,6 +342,7 @@ static void BuildDeckPhase(Player* player, int player_id, int mode) {
             if (card_idx < 0 || card_idx >= g_card_count) { printf("[Engine] invalid card index, skipped\n"); continue; }
             player->draw_pile[player->draw_count++] = g_all_cards[card_idx];
         }
+        if (finalize) break;
     }
 
     printf("玩家%d 牌库共 %d 张卡牌\n", player_id, player->draw_count);
