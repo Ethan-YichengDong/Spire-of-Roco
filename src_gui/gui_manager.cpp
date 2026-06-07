@@ -303,7 +303,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
                 // show current active character info
                 draw_line(" Active: "); print_character(&p->team[p->active_idx]);
-                int hx = 260, hy = g_draw_y + 10, hw = 220, hh = 40;
+                int hx = 140, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
@@ -373,7 +373,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 reset_draw_y();
                 draw_team_hp_panel(&state);
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
-                int sx = 200, sy = g_draw_y + 10, sw = 300, sh = 48;
+                int sx = 120, sy = g_draw_y + 10, sw = 320, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
@@ -472,7 +472,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
-    int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
+    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
@@ -536,7 +536,7 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
+    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
     int* selected = (int*)malloc(sizeof(int) * g_char_count);
     memset(selected, 0, sizeof(int) * g_char_count);
