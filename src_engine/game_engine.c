@@ -276,7 +276,7 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
             break;
         } else {
             // Allow player to select multiple characters at once
-            pick_count = SelectMultipleCharactersFromUI(player_id, TEAM_SIZE - slot, picks, &pick_count);
+            pick_count = SelectMultipleCharactersFromUI(player_id, state, TEAM_SIZE - slot, picks, &pick_count);
         }
 
         if (pick_count <= 0) {

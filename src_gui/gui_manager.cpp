@@ -95,13 +95,13 @@ static void draw_overlay_message(const char* utf8msg) {
 // their HP is always visible during the turn.
 static void draw_team_hp_panel(const GameState* st) {
     if (!st) return;
-    int x = 515, y = 10; // slightly left and a bit wider panel
+    int x = 480, y = 10; // shifted left slightly to avoid overflow
     char buf[128];
     setfillcolor(WHITE);
     setlinecolor(BLACK);
-    // background for panel (widened)
-    fillrectangle(x - 8, y - 4, 800, 240);
-    rectangle(x - 8, y - 4, 800, 240);
+    // background for panel
+    fillrectangle(x - 8, y - 4, 760, 220);
+    rectangle(x - 8, y - 4, 760, 220);
     settextcolor(BLACK);
     snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
     outtextxy_utf8(x + 6, y, buf); y += 22;
@@ -301,6 +301,8 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 reset_draw_y();
                 draw_team_hp_panel(&state);
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
+                // show current active character info
+                draw_line(" Active: "); print_character(&p->team[p->active_idx]);
                 int hx = 260, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
@@ -529,7 +531,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 }
 
 // New: multi-select characters at once. Returns number selected (0 = none). Fills out_indices and out_count.
-int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
+int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
@@ -543,7 +545,7 @@ int SelectMultipleCharactersFromUI(int player_id, int max_select, int* out_indic
     while (1) {
         if (need_redraw) {
             reset_draw_y();
-            draw_team_hp_panel(NULL);
+            draw_team_hp_panel(st);
             for (int i = 0; i < g_char_count; i++) {
                 char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
                 if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
