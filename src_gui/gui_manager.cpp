@@ -48,10 +48,28 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
 }
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
+    // Draw filled button with visible text to avoid overlap artifacts
+    setfillcolor(WHITE);
     setlinecolor(BLACK);
-    settextcolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
     rectangle(x, y, x + w, y + h);
+    settextcolor(BLACK);
     outtextxy_utf8(x + 6, y + 6, label);
+}
+
+// Draw a button and mark it as checked (used to indicate a confirmed selection)
+static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
+    // Draw normal button background
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
+    // Draw a small left marker (green) so the text is not occluded and no flicker
+    setfillcolor(GREEN);
+    fillrectangle(x + 6, y + 6, x + 22, y + h - 6);
+    // Draw label shifted right to avoid marker
+    settextcolor(BLACK);
+    outtextxy_utf8(x + 30, y + 6, label);
 }
 
 static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
@@ -64,6 +82,47 @@ static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
     }
     return 0;
 }
+
+// Draw a non-intrusive overlay message at the bottom of the screen to avoid
+// overlapping interactive UI elements (buttons, lists).
+static void draw_overlay_message(const char* utf8msg) {
+    std::string s = utf8_to_acp_str(utf8msg);
+    int x = 20, w = 760, h = 40, y = 540; // bottom area for messages
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
+    settextcolor(BLACK);
+    outtextxy(x + 6, y + 10, s.c_str());
+}
+
+// Render both teams' characters and HP on a side panel (right side) so that
+// their HP is always visible during the turn.
+static void draw_team_hp_panel(const GameState* st) {
+    if (!st) return;
+    int x = 480, y = 10; // shifted left slightly to avoid overflow
+    char buf[128];
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    // background for panel (slightly extended to the right)
+    fillrectangle(x - 8, y - 4, 765, 220);
+    rectangle(x - 8, y - 4, 765, 220);
+    settextcolor(BLACK);
+    snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
+    outtextxy_utf8(x + 6, y, buf); y += 22;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        snprintf(buf, sizeof(buf), " P1[%d] %s  HP:%d/%d", i, st->p1.team[i].name, st->p1.team[i].hp, st->p1.team[i].max_hp);
+        outtextxy_utf8(x + 6, y, buf); y += 22;
+    }
+    y += 6;
+    snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
+    outtextxy_utf8(x + 6, y, buf); y += 22;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        snprintf(buf, sizeof(buf), " P2[%d] %s  HP:%d/%d", i, st->p2.team[i].name, st->p2.team[i].hp, st->p2.team[i].max_hp);
+        outtextxy_utf8(x + 6, y, buf); y += 22;
+    }
+}
+
 #endif
 #else
 // no graphical helpers
@@ -148,23 +207,23 @@ void RenderGameBoard(GameState state) {
 
     draw_line("========================================");
 #else
-    printf("\n=== 游戏面板 (回合:%d) 当前行动: 玩家 %d ===\n", state.round_count, state.current_turn);
+    printf("\n=== Game Board (Round:%d) Current Turn: Player %d ===\n", state.round_count, state.current_turn);
 
-    printf("-- 玩家1: %s --\n", state.p1.name);
+    printf("-- Player1: %s --\n", state.p1.name);
     printf(" Active: "); print_character(&state.p1.team[state.p1.active_idx]);
-    printf(" Energy: %d/%d  手牌:%d  抽牌堆:%d 弃牌堆:%d\n", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count);
+    printf(" Energy: %d/%d  Hand:%d  Draw:%d Discard:%d\n", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count);
     if (state.p1.hand_count > 0) {
-        printf(" 手牌:\n");
+        printf(" Hand:\n");
         for (int i = 0; i < state.p1.hand_count; i++) {
             print_card(&state.p1.hand[i], i);
         }
     }
 
-    printf("\n-- 玩家2: %s --\n", state.p2.name);
+    printf("\n-- Player2: %s --\n", state.p2.name);
     printf(" Active: "); print_character(&state.p2.team[state.p2.active_idx]);
-    printf(" Energy: %d/%d  手牌:%d  抽牌堆:%d 弃牌堆:%d\n", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count);
+    printf(" Energy: %d/%d  Hand:%d  Draw:%d Discard:%d\n", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count);
     if (state.p2.hand_count > 0) {
-        printf(" 手牌:\n");
+        printf(" Hand:\n");
         for (int i = 0; i < state.p2.hand_count; i++) {
             print_card(&state.p2.hand[i], i);
         }
@@ -176,20 +235,20 @@ void RenderGameBoard(GameState state) {
 
 static void wait_for_enter(const char* prompt) {
 #ifdef USE_EASYX
-    draw_line(prompt);
-    Sleep(150);
+    // Draw prompt in a bottom overlay so it doesn't overlap buttons
+    draw_overlay_message(prompt);
+    // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
     while (1) {
-        if ((GetAsyncKeyState(VK_RETURN) & 0x8000) ||
-            (GetAsyncKeyState(VK_SPACE) & 0x8000) ||
-            (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
-            break;
+        // check for mouse clicks queued by EasyX
+        if (MouseHit()) {
+            MOUSEMSG mm = GetMouseMsg();
+            if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
         }
-        Sleep(16);
-    }
-    while ((GetAsyncKeyState(VK_RETURN) & 0x8000) ||
-           (GetAsyncKeyState(VK_SPACE) & 0x8000) ||
-           (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
-        Sleep(16);
+        // check keyboard state (any key)
+        for (int vk = 8; vk <= 255; vk++) {
+            if (GetAsyncKeyState(vk) & 0x8000) return;
+        }
+        Sleep(10);
     }
 #else
     printf("%s", prompt);
@@ -201,11 +260,11 @@ static void wait_for_enter(const char* prompt) {
 
 void ShowTurnTransitionMask(int player_id) {
 #ifdef USE_EASYX
-    char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_line(buf);
-    wait_for_enter("Click, Space, or Enter to continue...");
+    char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_overlay_message(buf);
+    wait_for_enter("Press any key to continue...");
 #else
-    printf("\n---- 轮到 玩家 %d ----\n", player_id);
-    wait_for_enter("按回车继续...\n");
+    printf("\n---- Turn: Player %d ----\n", player_id);
+    wait_for_enter("Press Enter to continue...\n");
 #endif
 }
 
@@ -225,10 +284,13 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     } else {
         p = (player_id == 1) ? (Player*)&state.p1 : (Player*)&state.p2;
     }
+    char buf[256];
 
 #ifdef USE_EASYX
     reset_draw_y();
-    draw_line("Please choose action:");
+    // render side panel with HP so it's always visible
+    draw_team_hp_panel(&state);
+    snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
     int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
     draw_button(bx, by, bw, bh, "End Turn");
     draw_button(bx, by + 60, bw, bh, "Play Card");
@@ -241,8 +303,13 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
                 if (p->hand_count == 0) { draw_line("Hand empty, cannot play."); continue; }
-                // 显示手牌为可点按钮
-                int hx = 260, hy = by, hw = 220, hh = 40;
+                // 清理并显示手牌为可点按钮（避免文本重叠）
+                reset_draw_y();
+                draw_team_hp_panel(&state);
+                snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
+                // show current active character info
+                draw_line(" Active: "); print_character(&p->team[p->active_idx]);
+                int hx = 160, hy = g_draw_y + 10, hw = 220, hh = 40;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
@@ -254,23 +321,44 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                         for (int i = 0; i < p->hand_count; i++) {
                             int rx = hx, ry = hy + i * (hh + 8);
                             if (point_in_rect(m.x, m.y, rx, ry, hw, hh)) {
+                                Card* c = &p->hand[i];
+                                // If not enough energy, show message and ignore this click
+                                if (p->energy < c->energy_cost) {
+                                    char msg[128]; snprintf(msg, sizeof(msg), "Not enough energy: %s requires %d, current %d/%d", c->name, c->energy_cost, p->energy, p->max_energy);
+                                    draw_overlay_message(msg);
+                                    break; // end for loop and wait for next click
+                                }
+                                // 构造动作并显示信息
                                 act.type = ACTION_PLAY_CARD;
                                 act.card_hand_idx = i;
                                 act.actor_id = player_id;
-                                Card* c = &p->hand[i];
+                                {
+                                    char ebuf[128];
+                                    snprintf(ebuf, sizeof(ebuf), "Play: %s  Cost:%d  Remaining Energy:%d/%d",
+                                             c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
+                                    draw_overlay_message(ebuf);
+                                }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
-                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮）
-                                    int tx = 30, ty = hy + p->hand_count * (hh + 8) + 20, tw = 140, th = 40;
+                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
+                                    int tx = 540, ty = 230, tw = 220, th = 40;
+                                    Character* target_team = NULL;
+                                    if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
+                                    else {
+                                        // 敌方队伍
+                                        if (player_id == state.p1.player_id) target_team = (Character*)state.p2.team;
+                                        else target_team = (Character*)state.p1.team;
+                                    }
                                     for (int t = 0; t < TEAM_SIZE; t++) {
-                                        char tb[64]; snprintf(tb, sizeof(tb), "Target %d", t);
-                                        draw_button(tx + t * (tw + 8), ty, tw, th, tb);
+                                        char tb[128]; snprintf(tb, sizeof(tb), "Target %d: %s", t, target_team[t].name);
+                                        draw_button(tx, ty + t * (th + 8), tw, th, tb);
                                     }
                                     while (1) {
                                         m = GetMouseMsg();
                                         if (m.uMsg == WM_LBUTTONDOWN) {
                                             for (int t = 0; t < TEAM_SIZE; t++) {
-                                                int rx2 = tx + t * (tw + 8);
-                                                if (point_in_rect(m.x, m.y, rx2, ty, tw, th)) {
+                                                int rx2 = tx;
+                                                int ry2 = ty + t * (th + 8);
+                                                if (point_in_rect(m.x, m.y, rx2, ry2, tw, th)) {
                                                     act.target_idx = t;
                                                     return act;
                                                 }
@@ -287,8 +375,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 }
             }
             else if (point_in_rect(m.x, m.y, bx, by + 120, bw, bh)) {
-                // 显示可切换角色
-                int sx = 260, sy = by, sw = 300, sh = 48;
+                // 清理并显示可切换角色（避免文本重叠）
+                reset_draw_y();
+                draw_team_hp_panel(&state);
+                snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
+                int sx = 120, sy = g_draw_y + 10, sw = 320, sh = 48;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
@@ -312,51 +403,69 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
         }
     }
 #else
-    // 退回控制台实现
+    // fallback console implementation
     while (1) {
-        printf("\n玩家 %d 操作选择：\n", player_id);
-        printf(" 0: 结束回合\n 1: 出牌\n 2: 切换角色\n");
-        printf("\n请输入选项编号: ");
+        printf("\nPlayer %d - choose action:\n", player_id);
+        printf("Current active:\n");
+        print_character(&p->team[p->active_idx]);
+        printf(" 0: End Turn\n 1: Play Card\n 2: Switch Character\n");
+        printf("\nEnter option number: ");
         int opt = -1;
         if (scanf("%d", &opt) != 1) { while(getchar()!='\n'); opt = -1; }
-        // 清理换行
+        // consume remaining newline
         int ch = getchar(); if (ch != '\n' && ch != EOF) while (getchar()!='\n');
 
         if (opt == 0) { act.type = ACTION_END_TURN; return act; }
         else if (opt == 1) {
-            if (p->hand_count == 0) { printf("手牌为空，无法出牌。\n"); continue; }
-            printf("请选择手牌索引 (0..%d): ", p->hand_count - 1);
+            if (p->hand_count == 0) { printf("Hand empty, cannot play.\n"); continue; }
+            printf("Choose hand index (0..%d): ", p->hand_count - 1);
             int idx = -1;
-            if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+            if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
             while(getchar()!='\n');
-            if (idx < 0 || idx >= p->hand_count) { printf("索引越界\n"); continue; }
+            if (idx < 0 || idx >= p->hand_count) { printf("Index out of range\n"); continue; }
+            Card* c = &p->hand[idx];
+            if (p->energy < c->energy_cost) {
+                printf("Not enough energy: %s requires %d, current %d/%d\n", c->name, c->energy_cost, p->energy, p->max_energy);
+                continue;
+            }
             act.type = ACTION_PLAY_CARD;
             act.card_hand_idx = idx;
             act.actor_id = player_id;
-            Card* c = &p->hand[idx];
+            printf("Play: %s  Cost:%d  Remaining Energy:%d/%d\n", c->name, c->energy_cost, p->energy - c->energy_cost, p->max_energy);
             if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
-                printf("请选择目标索引 (0..%d): ", TEAM_SIZE - 1);
+                // list available targets with names
+                Player* enemy = (player_id == state.p1.player_id) ? (Player*)&state.p2 : (Player*)&state.p1;
+                if (c->target_type == TARGET_ENEMY_SINGLE) {
+                    printf("Available targets (enemy):\n");
+                    for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, enemy->team[t].name);
+                } else {
+                    printf("Available targets (self):\n");
+                    for (int t = 0; t < TEAM_SIZE; t++) printf(" %d: %s\n", t, p->team[t].name);
+                }
+                printf("Please choose target index (0..%d): ", TEAM_SIZE - 1);
                 int tid = -1;
-                if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+                if (scanf("%d", &tid) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
                 while(getchar()!='\n');
                 act.target_idx = tid;
             } else { act.target_idx = 0; }
             return act;
         }
         else if (opt == 2) {
-            printf("可切换的队伍成员:\n");
+            printf("Current active:\n");
+            print_character(&p->team[p->active_idx]);
+            printf("Switchable team members:\n");
             for (int i = 0; i < TEAM_SIZE; i++) { printf(" %d: ", i); print_character(&p->team[i]); }
-            printf("请选择切换到的索引 (0..%d): ", TEAM_SIZE - 1);
+            printf("Choose index to switch to (0..%d): ", TEAM_SIZE - 1);
             int s = -1;
-            if (scanf("%d", &s) != 1) { while(getchar()!='\n'); printf("输入无效\n"); continue; }
+            if (scanf("%d", &s) != 1) { while(getchar()!='\n'); printf("Invalid input\n"); continue; }
             while(getchar()!='\n');
-            if (s < 0 || s >= TEAM_SIZE || !p->team[s].is_alive) { printf("无效的索引或角色已阵亡\n"); continue; }
+            if (s < 0 || s >= TEAM_SIZE || !p->team[s].is_alive) { printf("Invalid index or character is dead\n"); continue; }
             act.type = ACTION_SWITCH_CHAR;
             act.switch_to_idx = s;
             act.actor_id = player_id;
             return act;
         }
-        else { printf("未知选项，请重试。\n"); }
+        else { printf("Unknown option, please try again.\n"); }
     }
 #endif
 }
@@ -364,89 +473,313 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
+    // legacy single-select preserved for compatibility
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Character Select] Player %d choose for slot %d", player_id, slot_number); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
-    // 绘制为可点击列表
-    int sx = 30, sy = g_draw_y + 10, sw = 640, sh = 36;
-    for (int i = 0; i < g_char_count; i++) {
-        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-        draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
-    }
+    // Draw clickable list but keep selection until confirmed
+    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
+    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
+    int selected_idx = -1;
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL); // keep HP panel intact; callers render full state before calling select
+            for (int i = 0; i < g_char_count; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+                if (i == selected_idx) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+            }
+            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            need_redraw = 0;
+        }
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
                 int rx = sx, ry = sy + i * (sh + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_characters[i].name); draw_line(chosen);
-                    return i;
+                    selected_idx = i;
+                    need_redraw = 1;
+                    handled = 1;
+                    break;
+                }
+            }
+            // confirm button
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                if (selected_idx >= 0) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_characters[selected_idx].name); draw_overlay_message(chosen);
+                    return selected_idx;
+                } else {
+                    draw_overlay_message("No character selected");
+                    need_redraw = 1;
                 }
             }
         }
     }
 #else
-    printf("\n[角色选择] 玩家 %d 为槽位 %d 选择角色\n", player_id, slot_number);
-    if (g_char_count == 0) { printf("全局角色池为空，返回0\n"); return 0; }
+    printf("\n[Character Select] Player %d choose for slot %d\n", player_id, slot_number);
+    if (g_char_count == 0) { printf("Global character pool empty, returning 0\n"); return 0; }
     for (int i = 0; i < g_char_count; i++) {
         printf(" %2d: %s (ID:%d) HP:%d Speed:%d\n", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
     }
-    printf("输入选择的索引 (0..%d): ", g_char_count - 1);
+    printf("Enter selection index (0..%d): ", g_char_count - 1);
     int sel = -1;
     if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = 0; }
     while(getchar()!='\n');
     if (sel < 0 || sel >= g_char_count) sel = 0;
-    printf("选择: %s\n", g_all_characters[sel].name);
+    printf("Selected: %s\n", g_all_characters[sel].name);
     return sel;
+#endif
+}
+
+// New: multi-select characters at once. Returns number selected (0 = none). Fills out_indices and out_count.
+int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_select, int* out_indices, int* out_count) {
+#ifdef USE_EASYX
+    reset_draw_y();
+    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
+    if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
+    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
+    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
+    int* selected = (int*)malloc(sizeof(int) * g_char_count);
+    memset(selected, 0, sizeof(int) * g_char_count);
+    MOUSEMSG m;
+    int need_redraw = 1;
+    while (1) {
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(st);
+            for (int i = 0; i < g_char_count; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+                if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
+                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+            }
+            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            need_redraw = 0;
+        }
+
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
+            for (int i = 0; i < g_char_count; i++) {
+                int rx = sx, ry = sy + i * (sh + 6);
+                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
+            }
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                int count = 0;
+                for (int i = 0; i < g_char_count && count < max_select; i++) { if (selected[i]) out_indices[count++] = i; }
+                free(selected);
+                if (out_count) *out_count = count;
+                return count;
+            }
+        }
+    }
+#else
+    printf("\n[Character Select - Multi] Player %d - select up to %d (enter indices separated by space, -1 to finish)\n", player_id, max_select);
+    if (g_char_count == 0) { printf("Global character pool empty, returning 0\n"); if (out_count) *out_count = 0; return 0; }
+    for (int i = 0; i < g_char_count; i++) printf(" %2d: %s (ID:%d) HP:%d Speed:%d\n", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
+    int count = 0; int idx = -2;
+    while (count < max_select) {
+        if (scanf("%d", &idx) != 1) { while(getchar()!='\n'); break; }
+        if (idx == -1) break;
+        if (idx < 0 || idx >= g_char_count) continue;
+        out_indices[count++] = idx;
+    }
+    while(getchar()!='\n');
+    if (out_count) *out_count = count;
+    return count;
 #endif
 }
 
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
+    // legacy single-select behavior preserved for compatibility
     reset_draw_y();
-    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d selecting card %d", player_id, current_deck_size + 1); draw_line(buf);
+    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
-    for (int i = 0; i < show; i++) {
-        char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-        draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
-    }
-    // add finish button
-    draw_button(cx + cw + 20, cy + show * (ch + 6), 120, 40, "Finish Build");
+    int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
+    int selected_idx = -1;
     MOUSEMSG m;
+    int need_redraw = 1;
     while (1) {
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL);
+            for (int i = 0; i < show; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+                if (i == selected_idx) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
+                else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
+            }
+            // add finish and confirm buttons
+            draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
+            draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+            need_redraw = 0;
+        }
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
             for (int i = 0; i < show; i++) {
                 int rx = cx, ry = cy + i * (ch + 6);
                 if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Selected: %s", g_all_cards[i].name); draw_line(chosen);
-                    return i;
+                    selected_idx = i;
+                    need_redraw = 1;
+                    handled = 1;
+                    break;
                 }
             }
-            // 结束按钮
-            if (point_in_rect(m.x, m.y, cx + cw + 20, cy + show * (ch + 6), 120, 40)) {
+            // finish button
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
                 return -1;
+            }
+            // confirm button
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+                if (selected_idx >= 0) {
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message(chosen);
+                    return selected_idx;
+                } else {
+                    draw_overlay_message("No card selected");
+                    need_redraw = 1;
+                }
             }
         }
     }
 #else
-    printf("\n[卡牌构筑] 玩家 %d 选择第 %d 张卡牌 (输入 -1 结束)\n", player_id, current_deck_size + 1);
-    if (g_card_count == 0) { printf("全局卡池为空，返回 -1\n"); return -1; }
+    printf("\n[Deck Build] Player %d - Selected %d so far (input -1 to finish)\n", player_id, current_deck_size);
+    if (g_card_count == 0) { printf("Global card pool empty, returning -1\n"); return -1; }
     int show = g_card_count < 20 ? g_card_count : 20;
     for (int i = 0; i < show; i++) {
         print_card(&g_all_cards[i], i);
     }
-    printf("输入要加入的卡牌索引 (0..%d) 或 -1 结束: ", g_card_count - 1);
+    printf("Enter index to add (0..%d) or -1 to finish: ", g_card_count - 1);
     int sel = -2;
     if (scanf("%d", &sel) != 1) { while(getchar()!='\n'); sel = -1; }
     while(getchar()!='\n');
     if (sel == -1) return -1;
     if (sel < 0 || sel >= g_card_count) sel = 0;
-    printf("已选择: %s\n", g_all_cards[sel].name);
+    printf("Selected: %s\n", g_all_cards[sel].name);
     return sel;
+#endif
+}
+
+// New: allow selecting multiple cards at once; returns number of selected indices (0 = none), fills out_indices and sets out_count
+int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
+#ifdef USE_EASYX
+    reset_draw_y();
+    char buf[256]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Deck Building (max %d cards)", player_id, max_select); draw_line(buf);
+    if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
+    int show = g_card_count < 8 ? g_card_count : 8; // limit UI to 8 unique card types per spec
+    int cx = 30, cy = g_draw_y + 10, card_w = 300, card_h = 36;
+    int minus_w = 40, qty_w = 60, plus_w = 40;
+    int line_h = card_h + 6;
+    int confirm_x = cx, confirm_y = cy + show * line_h + 60;
+    int* qty = (int*)calloc(show, sizeof(int));
+    if (!qty) { if (out_count) *out_count = 0; return 0; }
+    int total = 0;
+    MOUSEMSG m;
+    int need_redraw = 1;
+    while (1) {
+        if (need_redraw) {
+            reset_draw_y();
+            draw_team_hp_panel(NULL);
+            char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select); settextcolor(BLACK); draw_line(header);
+            for (int i = 0; i < show; i++) {
+                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
+                int x_label = cx;
+                int x_minus = cx + card_w + 8;
+                int x_qty = x_minus + minus_w + 8;
+                int x_plus = x_qty + qty_w + 8;
+                // draw card label
+                draw_button(x_label, cy + i * line_h, card_w, card_h, tmp);
+                // draw minus, qty, plus controls
+                char mbuf[16]; snprintf(mbuf, sizeof(mbuf), "-"); draw_button(x_minus, cy + i * line_h, minus_w, card_h, mbuf);
+                char qbuf[32]; snprintf(qbuf, sizeof(qbuf), "%d", qty[i]); draw_button(x_qty, cy + i * line_h, qty_w, card_h, qbuf);
+                char pbuf[16]; snprintf(pbuf, sizeof(pbuf), "+"); draw_button(x_plus, cy + i * line_h, plus_w, card_h, pbuf);
+            }
+            // footer buttons
+            draw_button(confirm_x, confirm_y, 140, 40, "End Building");
+            // show total at bottom overlay as real-time statistic
+            char tbuf[64]; snprintf(tbuf, sizeof(tbuf), "Total cards: %d/%d", total, max_select); draw_overlay_message(tbuf);
+            need_redraw = 0;
+        }
+
+        m = GetMouseMsg();
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            int handled = 0;
+            for (int i = 0; i < show; i++) {
+                int x_minus = cx + card_w + 8;
+                int x_qty = x_minus + minus_w + 8;
+                int x_plus = x_qty + qty_w + 8;
+                int ry = cy + i * line_h;
+                if (point_in_rect(m.x, m.y, x_minus, ry, minus_w, card_h)) {
+                    if (qty[i] > 0) { qty[i]--; total--; }
+                    need_redraw = 1; handled = 1; break;
+                }
+                if (point_in_rect(m.x, m.y, x_plus, ry, plus_w, card_h)) {
+                    if (total < max_select) { qty[i]++; total++; }
+                    else draw_overlay_message("Cannot exceed deck limit");
+                    need_redraw = 1; handled = 1; break;
+                }
+            }
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
+                // End Building: finalize selection and return negative count to signal engine to stop further rounds
+                int count = 0;
+                for (int i = 0; i < show && count < max_select; i++) {
+                    for (int k = 0; k < qty[i] && count < max_select; k++) {
+                        out_indices[count++] = i;
+                    }
+                }
+                free(qty);
+                if (out_count) *out_count = count;
+                return -count; // negative indicates finalize
+            }
+        }
+    }
+#else
+    // Console fallback: simple text controls
+    printf("\n[Deck Build] Player %d - Deck Building (max %d cards)\n", player_id, max_select);
+    if (g_card_count == 0) { printf("Global card pool empty, returning 0\n"); if (out_count) *out_count = 0; return 0; }
+    int show = g_card_count < 8 ? g_card_count : 8;
+    int* qty = (int*)calloc(show, sizeof(int));
+    if (!qty) { if (out_count) *out_count = 0; return 0; }
+    int total = 0;
+    while (1) {
+        printf("Current selection (%d/%d):\n", total, max_select);
+        for (int i = 0; i < show; i++) {
+            printf(" %2d: %s  qty=%d\n", i, g_all_cards[i].name, qty[i]);
+        }
+        printf("Commands: +<index> to add, -<index> to remove, f to finish, e to end building\n");
+        char cmd[64];
+        if (!fgets(cmd, sizeof(cmd), stdin)) break;
+        if (cmd[0] == 'f') break;
+        if (cmd[0] == 'e') { free(qty); if (out_count) *out_count = 0; return 0; }
+        if ((cmd[0] == '+' || cmd[0] == '-') ) {
+            int idx = atoi(cmd + 1);
+            if (idx < 0 || idx >= show) { printf("Invalid index\n"); continue; }
+            if (cmd[0] == '+') {
+                if (total < max_select) { qty[idx]++; total++; }
+                else printf("Cannot exceed deck limit\n");
+            } else {
+                if (qty[idx] > 0) { qty[idx]--; total--; }
+                else printf("Quantity already 0\n");
+            }
+            continue;
+        }
+        printf("Unknown command\n");
+    }
+    // flatten quantities into out_indices
+    int count = 0;
+    for (int i = 0; i < show && count < max_select; i++) {
+        for (int k = 0; k < qty[i] && count < max_select; k++) out_indices[count++] = i;
+    }
+    free(qty);
+    if (out_count) *out_count = count;
+    return count;
 #endif
 }
 
@@ -454,23 +787,39 @@ int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
     reset_draw_y(); draw_line("Main Menu: Select mode:");
     int bx = 60, by = g_draw_y + 10, bw = 240, bh = 60;
-    draw_button(bx, by, bw, bh, "Local PvP (default)");
-    draw_button(bx, by + 90, bw, bh, "AI PvE");
+    int confirm_x = bx, confirm_y = by + 200; // place confirm below options
+    int selected_mode = -1;
     MOUSEMSG m;
     while (1) {
+        // redraw options
+        if (selected_mode == MODE_PVP) draw_button_with_check(bx, by, bw, bh, "Local PvP (default)");
+        else draw_button(bx, by, bw, bh, "Local PvP (default)");
+        if (selected_mode == MODE_PVE) draw_button_with_check(bx, by + 90, bw, bh, "AI PvE");
+        else draw_button(bx, by + 90, bw, bh, "AI PvE");
+        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+
         m = GetMouseMsg();
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { draw_line("Mode: PvP"); return MODE_PVP; }
-            if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { draw_line("Mode: PvE"); return MODE_PVE; }
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; }
+            else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; }
+            else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+                if (selected_mode == MODE_PVP || selected_mode == MODE_PVE) {
+                    char msg[64]; snprintf(msg, sizeof(msg), "Mode confirmed: %s", (selected_mode == MODE_PVE) ? "PvE" : "PvP");
+                    draw_overlay_message(msg);
+                    return selected_mode;
+                } else {
+                    draw_overlay_message("No mode selected");
+                }
+            }
         }
     }
 #else
-    printf("\n主菜单：选择模式 0=本地PvP 1=人机PvE (默认0): ");
+    printf("\nMain Menu: Select mode 0=Local PvP 1=AI PvE (default 0): ");
     int m = MODE_PVP;
     if (scanf("%d", &m) != 1) { while(getchar()!='\n'); m = MODE_PVP; }
     while(getchar()!='\n');
     if (m != MODE_PVE) m = MODE_PVP;
-    printf("选择模式: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
+    printf("Mode selected: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
     return m;
 #endif
 }
