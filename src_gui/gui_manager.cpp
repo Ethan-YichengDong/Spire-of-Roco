@@ -658,6 +658,7 @@ static void build_card_stats_text(const Card* c, char* out, size_t out_size) {
 static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, int selected, int hover, int disabled, int quantity) {
     if (!c) return;
     char buf[256];
+    int compact = h < 72 || w < 360;
     COLORREF elem = disabled ? RGB(128, 128, 128) : element_color(c->element);
     COLORREF fill = disabled ? RGB(210, 211, 205) : (selected ? RGB(239, 246, 228) : (hover ? RGB(246, 239, 216) : RGB(232, 225, 197)));
     COLORREF border = disabled ? RGB(126, 126, 120) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
@@ -681,16 +682,16 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
     settextcolor(RGB(47, 39, 18));
     outtextxy_utf8(x + w - 34, y + 12, buf);
 
-    settextstyle_utf8(22, 0, "SimSun");
+    settextstyle_utf8(compact ? 19 : 22, 0, "SimSun");
     settextcolor(disabled ? RGB(91, 91, 88) : RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
-    outtextxy_clipped_utf8(x + 20, y + 8, w - 78, buf);
-    settextstyle_utf8(18, 0, "SimSun");
+    outtextxy_clipped_utf8(x + 20, y + (compact ? 6 : 8), w - 78, buf);
+    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
     snprintf(buf, sizeof(buf), "%s / %s", element_label(c->element), card_type_label(c->type));
-    outtextxy_clipped_utf8(x + 20, y + 34, w - 44, buf);
+    outtextxy_clipped_utf8(x + 20, y + (compact ? 28 : 34), w - 44, buf);
     build_card_stats_text(c, buf, sizeof(buf));
-    outtextxy_clipped_utf8(x + 20, y + 53, w - 34, buf);
+    outtextxy_clipped_utf8(x + 20, y + (compact ? h - 20 : 53), w - 34, buf);
     if (quantity > 0) {
         snprintf(buf, sizeof(buf), "x%d", quantity);
         setfillcolor(RGB(50, 68, 86));
@@ -723,6 +724,30 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     outtextxy_clipped_utf8(x + 60, y + 28, w - 72, buf);
     draw_meter_colored(x + 60, y + h - 17, w - 78, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     present_frame();
+}
+
+static int compute_planned_card_rects(int card_count, int start_y, int footer_y, int* xs, int* ys, int* ws, int* hs) {
+    int available_w = g_main_w - 48;
+    int available_h = footer_y - start_y - UI_GAP;
+    int single_rows = available_h / (UI_CARD_H + UI_GAP);
+    int columns = (card_count > single_rows && available_w >= 560) ? 2 : 1;
+    int rows = (card_count + columns - 1) / columns;
+    int card_h = UI_CARD_H;
+    if (rows > 0) {
+        card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
+        card_h = clamp_int(card_h, 58, UI_CARD_H);
+    }
+    int card_w = (columns == 2) ? ((available_w - UI_GAP) / 2) : clamp_int(available_w, 380, 680);
+    int origin_x = g_main_x + 24;
+    for (int i = 0; i < card_count; i++) {
+        int col = i % columns;
+        int row = i / columns;
+        xs[i] = origin_x + col * (card_w + UI_GAP);
+        ys[i] = start_y + row * (card_h + UI_GAP);
+        ws[i] = card_w;
+        hs[i] = card_h;
+    }
+    return columns;
 }
 
 static Player* mutable_player(GameState* st, int player_id) {
@@ -1329,8 +1354,11 @@ card_select:
     p = mutable_player(&state, player_id);
     layout_version = g_ui_layout_version;
     {
-        int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 380, 680), ch = UI_CARD_H;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
+        int card_x[MAX_HAND_SIZE] = {0};
+        int card_y[MAX_HAND_SIZE] = {0};
+        int card_w[MAX_HAND_SIZE] = {0};
+        int card_h[MAX_HAND_SIZE] = {0};
         int hover_card = -1;
         int hover_back = 0;
         int need_redraw = 1;
@@ -1338,10 +1366,11 @@ card_select:
             if (need_redraw) {
                 begin_deferred_present();
                 draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
-                cx = g_main_x + 24; cy = g_draw_y + 10; cw = clamp_int(g_main_w - 64, 380, 680); ch = UI_CARD_H;
                 back_x = g_main_x + 16; back_y = bottom_button_y();
+                int card_start_y = g_draw_y + 10;
+                compute_planned_card_rects(p->hand_count, card_start_y, back_y, card_x, card_y, card_w, card_h);
                 for (int i = 0; i < p->hand_count; i++) {
-                    draw_card_panel(&p->hand[i], i, cx, cy + i * (ch + UI_GAP), cw, ch, 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
+                    draw_card_panel(&p->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
                 }
                 draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
                 draw_overlay_message_kind("Choose a playable card.", UI_MSG_HINT);
@@ -1357,8 +1386,7 @@ card_select:
             int new_hover_back = 0;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
             for (int i = 0; i < p->hand_count; i++) {
-                int ry = cy + i * (ch + UI_GAP);
-                if (point_in_rect(m.x, m.y, cx, ry, cw, ch)) {
+                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                     new_hover_card = i;
                     break;
                 }
@@ -1374,8 +1402,7 @@ card_select:
                 goto main_menu;
             }
             for (int i = 0; i < p->hand_count; i++) {
-                int ry = cy + i * (ch + UI_GAP);
-                if (!point_in_rect(m.x, m.y, cx, ry, cw, ch)) continue;
+                if (!point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) continue;
                 if (p->energy < p->hand[i].energy_cost) {
                     draw_overlay_message_kind("Not enough energy", UI_MSG_ERROR);
                     break;
