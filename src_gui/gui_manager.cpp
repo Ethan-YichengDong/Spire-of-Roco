@@ -636,6 +636,18 @@ static void get_team_slot_rect(int player_id, int slot, UiRect* rect) {
     set_ui_rect(rect, x, y, g_side_w - (UI_PAD * 2), slot_h);
 }
 
+static int hit_team_slot(int mouse_x, int mouse_y, int player_id, UiRect* out_rect) {
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        UiRect rect;
+        get_team_slot_rect(player_id, i, &rect);
+        if (point_in_ui_rect(mouse_x, mouse_y, &rect)) {
+            if (out_rect) *out_rect = rect;
+            return i;
+        }
+    }
+    return -1;
+}
+
 static void draw_character_slot(const Character* ch, int slot_idx, int x, int y, int w, int h,
                                 int active, int hover, int disabled, int mirror) {
     if (!ch) return;
@@ -925,15 +937,15 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
 }
 
 static void draw_battle_plan_screen(GameState* st, int player_id, const ActionRecord* records, int record_count, const char* title,
-                                    int hover_action, int can_edit) {
+                                    int hover_action, int hover_switch_slot, int can_edit) {
     begin_deferred_present();
     draw_planning_shell(st, player_id, records, record_count, title);
+    draw_team_hp_panel(st, player_id, hover_switch_slot);
     int bx = g_main_x + 24, by = g_draw_y + 10, bw = 240, bh = UI_BUTTON_H;
     draw_button_state(bx, by, bw, bh, "End Turn", 0, hover_action == 0, 0);
     draw_button_state(bx, by + 55, bw, bh, "Play Card", 0, hover_action == 1, 0);
-    draw_button_state(bx, by + 110, bw, bh, "Switch Character", 0, hover_action == 2, 0);
-    draw_button_state(bx, by + 165, bw, bh, can_edit ? "Edit Card" : "Edit Action", 0, hover_action == 3, !can_edit);
-    draw_overlay_message_kind("Choose an action for this turn.", UI_MSG_HINT);
+    draw_button_state(bx, by + 110, bw, bh, can_edit ? "Edit Card" : "Edit Action", 0, hover_action == 3, !can_edit);
+    draw_overlay_message_kind("Choose a card, end turn, or click your side panel to switch.", UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -1246,6 +1258,17 @@ action_menu:
         }
         if (layout_changed_since(&layout_version)) goto action_menu;
         if (m.uMsg == WM_LBUTTONDOWN) {
+            int switch_slot = hit_team_slot(m.x, m.y, player_id, NULL);
+            if (switch_slot >= 0) {
+                if (!p->team[switch_slot].is_alive) {
+                    draw_overlay_message_kind("Character is defeated", UI_MSG_ERROR);
+                    continue;
+                }
+                act.type = ACTION_SWITCH_CHAR;
+                act.switch_to_idx = switch_slot;
+                act.actor_id = player_id;
+                return act;
+            }
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
                 if (p->hand_count == 0) { draw_line("Hand empty, cannot play."); continue; }
@@ -1457,10 +1480,11 @@ main_menu:
         int can_edit = has_card_record(records, record_count);
         int bx = g_main_x + 24, by = g_draw_y + 10, bw = 240, bh = UI_BUTTON_H;
         int hover_action = -1;
+        int hover_switch_slot = -1;
         int need_redraw = 1;
         while (1) {
             if (need_redraw) {
-                draw_battle_plan_screen(&state, player_id, records, record_count, "Plan your turn", hover_action, can_edit);
+                draw_battle_plan_screen(&state, player_id, records, record_count, "Plan your turn", hover_action, hover_switch_slot, can_edit);
                 bx = g_main_x + 24; by = g_draw_y + 10; bw = 240; bh = UI_BUTTON_H;
                 need_redraw = 0;
             }
@@ -1470,15 +1494,26 @@ main_menu:
             }
             if (layout_changed_since(&layout_version)) goto main_menu;
             int new_hover = -1;
+            int new_hover_switch_slot = hit_team_slot(m.x, m.y, player_id, NULL);
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) new_hover = 0;
             else if (point_in_rect(m.x, m.y, bx, by + 55, bw, bh)) new_hover = 1;
-            else if (point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) new_hover = 2;
-            else if (point_in_rect(m.x, m.y, bx, by + 165, bw, bh)) new_hover = 3;
-            if (new_hover != hover_action) {
+            else if (point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) new_hover = 3;
+            if (new_hover != hover_action || new_hover_switch_slot != hover_switch_slot) {
                 hover_action = new_hover;
+                hover_switch_slot = new_hover_switch_slot;
                 need_redraw = 1;
             }
             if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (hover_switch_slot >= 0) {
+                if (!p->team[hover_switch_slot].is_alive) {
+                    draw_overlay_message_kind("Character is defeated", UI_MSG_ERROR);
+                    continue;
+                }
+                act.type = ACTION_SWITCH_CHAR;
+                act.switch_to_idx = hover_switch_slot;
+                act.actor_id = player_id;
+                return act;
+            }
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) {
                 act.type = ACTION_END_TURN;
                 return act;
@@ -1490,10 +1525,7 @@ main_menu:
                 }
                 goto card_select;
             }
-            if (point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) {
-                goto switch_select;
-            }
-            if (can_edit && point_in_rect(m.x, m.y, bx, by + 165, bw, bh)) {
+            if (can_edit && point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) {
                 goto edit_select;
             }
         }
@@ -1599,12 +1631,7 @@ target_select:
             if (layout_changed_since(&layout_version)) goto target_select;
             int new_hover = -1;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover = 10;
-            for (int t = 0; t < TEAM_SIZE; t++) {
-                if (point_in_ui_rect(m.x, m.y, &target_rects[t])) {
-                    new_hover = t;
-                    break;
-                }
-            }
+            else new_hover = hit_team_slot(m.x, m.y, target_player_id, NULL);
             if (new_hover != hover_target) {
                 hover_target = new_hover;
                 need_redraw = 1;
@@ -1614,13 +1641,14 @@ target_select:
                 reset_pending_action(&act, player_id);
                 goto main_menu;
             }
-            for (int t = 0; t < TEAM_SIZE; t++) {
-                if (!point_in_ui_rect(m.x, m.y, &target_rects[t])) continue;
-                if (!target_team[t].is_alive && c->target_type != TARGET_SELF_SINGLE) {
+            {
+                int target_slot = hit_team_slot(m.x, m.y, target_player_id, NULL);
+                if (target_slot < 0) continue;
+                if (!target_team[target_slot].is_alive && c->target_type != TARGET_SELF_SINGLE) {
                     draw_overlay_message_kind("Target is defeated", UI_MSG_ERROR);
-                    break;
+                    continue;
                 }
-                act.target_idx = t;
+                act.target_idx = target_slot;
                 return act;
             }
         }
@@ -1657,12 +1685,7 @@ switch_select:
             int new_hover_char = -1;
             int new_hover_back = 0;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
-            for (int i = 0; i < TEAM_SIZE; i++) {
-                if (point_in_ui_rect(m.x, m.y, &switch_rects[i])) {
-                    new_hover_char = i;
-                    break;
-                }
-            }
+            else new_hover_char = hit_team_slot(m.x, m.y, player_id, NULL);
             if (new_hover_char != hover_char || new_hover_back != hover_back) {
                 hover_char = new_hover_char;
                 hover_back = new_hover_back;
@@ -1673,14 +1696,15 @@ switch_select:
                 reset_pending_action(&act, player_id);
                 goto main_menu;
             }
-            for (int i = 0; i < TEAM_SIZE; i++) {
-                if (!point_in_ui_rect(m.x, m.y, &switch_rects[i])) continue;
-                if (!p->team[i].is_alive) {
+            {
+                int switch_slot = hit_team_slot(m.x, m.y, player_id, NULL);
+                if (switch_slot < 0) continue;
+                if (!p->team[switch_slot].is_alive) {
                     draw_overlay_message_kind("Character is defeated", UI_MSG_ERROR);
-                    break;
+                    continue;
                 }
                 act.type = ACTION_SWITCH_CHAR;
-                act.switch_to_idx = i;
+                act.switch_to_idx = switch_slot;
                 act.actor_id = player_id;
                 return act;
             }
