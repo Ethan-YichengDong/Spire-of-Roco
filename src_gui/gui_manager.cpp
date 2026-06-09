@@ -44,6 +44,8 @@ static int g_team_panel_y = 60;
 static int g_team_panel_h = 300;
 static int g_records_panel_y = 376;
 static int g_records_panel_h = 260;
+static int g_is_fullscreen = 1;
+static int g_is_quitting = 0;
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -78,6 +80,50 @@ static void update_layout() {
 
 static int bottom_button_y() {
     return g_ui_h - g_ui_margin - 96;
+}
+
+static void apply_window_mode(int fullscreen) {
+    HWND hwnd = GetHWnd();
+    if (!hwnd) return;
+    int screen_w = GetSystemMetrics(SM_CXSCREEN);
+    int screen_h = GetSystemMetrics(SM_CYSCREEN);
+    if (screen_w < 1024) screen_w = 1024;
+    if (screen_h < 720) screen_h = 720;
+
+    if (fullscreen) {
+        SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        g_is_fullscreen = 1;
+        return;
+    }
+
+    int window_w = clamp_int((screen_w * 4) / 5, 1024, screen_w);
+    int window_h = clamp_int((screen_h * 4) / 5, 720, screen_h);
+    int window_x = (screen_w - window_w) / 2;
+    int window_y = (screen_h - window_h) / 2;
+    SetWindowLong(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, window_x, window_y, window_w, window_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    ShowWindow(hwnd, SW_SHOWNORMAL);
+    SetForegroundWindow(hwnd);
+    g_is_fullscreen = 0;
+}
+
+static void quit_game_from_gui() {
+    if (g_is_quitting) return;
+    g_is_quitting = 1;
+    EndBatchDraw();
+    closegraph();
+    exit(0);
+}
+
+static void handle_global_hotkeys() {
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+        quit_game_from_gui();
+    }
+    int alt_enter = ((GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState(VK_RETURN) & 0x0001));
+    if ((GetAsyncKeyState(VK_F11) & 0x0001) || alt_enter) {
+        apply_window_mode(!g_is_fullscreen);
+    }
 }
 
 static void load_ui_assets() {
@@ -189,24 +235,29 @@ static void draw_status_bar(const GameState* st, int acting_player_id, const cha
         snprintf(buf, sizeof(buf), "Phase: %s", phase);
         outtextxy_utf8(g_ui_margin + 350, 12, buf);
     }
+    outtextxy_utf8(g_ui_w - 250, 12, "Esc: Quit  F11: Toggle");
     g_draw_y = g_main_y + 14;
 }
 
 static void drain_easyx_input() {
     while (MouseHit()) {
+        handle_global_hotkeys();
         GetMouseMsg();
     }
     Sleep(80);
     while (MouseHit()) {
+        handle_global_hotkeys();
         GetMouseMsg();
     }
     while ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
            (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
            (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
+        handle_global_hotkeys();
         Sleep(10);
     }
     int any_down = 1;
     while (any_down) {
+        handle_global_hotkeys();
         any_down = 0;
         for (int vk = 8; vk <= 255; vk++) {
             if (GetAsyncKeyState(vk) & 0x8000) {
@@ -222,6 +273,7 @@ static void wait_for_fresh_ack(const char* prompt) {
     draw_overlay_message(prompt);
     drain_easyx_input();
     while (1) {
+        handle_global_hotkeys();
         if (MouseHit()) {
             MOUSEMSG mm = GetMouseMsg();
             if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
@@ -240,6 +292,16 @@ static void wait_for_fresh_ack(const char* prompt) {
 
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+}
+
+static int poll_mouse_message(MOUSEMSG* out_msg) {
+    handle_global_hotkeys();
+    if (!MouseHit()) {
+        Sleep(10);
+        return 0;
+    }
+    *out_msg = GetMouseMsg();
+    return 1;
 }
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
@@ -429,11 +491,8 @@ void InitGUI() {
     int screen_h = GetSystemMetrics(SM_CYSCREEN);
     if (screen_w < 1024) screen_w = 1024;
     if (screen_h < 720) screen_h = 720;
-    HWND hwnd = initgraph(screen_w, screen_h);
-    if (hwnd) {
-        SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
+    initgraph(screen_w, screen_h);
+    apply_window_mode(1);
     BeginBatchDraw();
     load_ui_assets();
     setbkcolor(RGB(238, 231, 201));
@@ -570,6 +629,7 @@ static void wait_for_enter(const char* prompt) {
     draw_overlay_message(prompt);
     // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
     while (1) {
+        handle_global_hotkeys();
         // check for mouse clicks queued by EasyX
         if (MouseHit()) {
             MOUSEMSG mm = GetMouseMsg();
@@ -630,7 +690,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
     MOUSEMSG m;
     while (1) {
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
@@ -648,7 +708,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 }
                 // 等待手牌点击
                 while (1) {
-                    m = GetMouseMsg();
+                    if (!poll_mouse_message(&m)) continue;
                     if (m.uMsg == WM_LBUTTONDOWN) {
                         for (int i = 0; i < p->hand_count; i++) {
                             int rx = hx, ry = hy + i * (hh + 8);
@@ -685,7 +745,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                         draw_button(tx, ty + t * (th + 8), tw, th, tb);
                                     }
                                     while (1) {
-                                        m = GetMouseMsg();
+                                        if (!poll_mouse_message(&m)) continue;
                                         if (m.uMsg == WM_LBUTTONDOWN) {
                                             for (int t = 0; t < TEAM_SIZE; t++) {
                                                 int rx2 = tx;
@@ -717,7 +777,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
                 }
                 while (1) {
-                    m = GetMouseMsg();
+                    if (!poll_mouse_message(&m)) continue;
                     if (m.uMsg == WM_LBUTTONDOWN) {
                         for (int i = 0; i < TEAM_SIZE; i++) {
                             int rx = sx, ry = sy + i * (sh + 8);
@@ -824,7 +884,7 @@ main_menu:
         if (can_edit) draw_button(bx, by + 165, bw, bh, "Edit Card");
         else draw_button_disabled(bx, by + 165, bw, bh, "Edit Action");
         while (1) {
-            m = GetMouseMsg();
+            if (!poll_mouse_message(&m)) continue;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) {
                 act.type = ACTION_END_TURN;
@@ -862,7 +922,7 @@ card_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            m = GetMouseMsg();
+            if (!poll_mouse_message(&m)) continue;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -909,7 +969,7 @@ target_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            m = GetMouseMsg();
+            if (!poll_mouse_message(&m)) continue;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -941,7 +1001,7 @@ switch_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            m = GetMouseMsg();
+            if (!poll_mouse_message(&m)) continue;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -978,7 +1038,7 @@ edit_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            m = GetMouseMsg();
+            if (!poll_mouse_message(&m)) continue;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -1090,7 +1150,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
             need_redraw = 0;
         }
 
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
@@ -1155,7 +1215,7 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
             need_redraw = 0;
         }
 
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
@@ -1218,7 +1278,7 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
             need_redraw = 0;
         }
 
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
@@ -1305,7 +1365,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
             need_redraw = 0;
         }
 
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
@@ -1395,7 +1455,7 @@ int GetModeSelectionFromUI() {
         else draw_button(bx, by + 90, bw, bh, "AI PvE");
         draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
 
-        m = GetMouseMsg();
+        if (!poll_mouse_message(&m)) continue;
         if (m.uMsg == WM_LBUTTONDOWN) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; }
             else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; }
