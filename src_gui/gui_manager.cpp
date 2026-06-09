@@ -49,6 +49,7 @@ static int g_is_quitting = 0;
 static int g_last_canvas_w = 0;
 static int g_last_canvas_h = 0;
 static int g_ui_layout_version = 0;
+static int g_defer_present = 0;
 
 static void draw_background_shell();
 static void present_frame();
@@ -250,7 +251,17 @@ static void draw_line(const char* s) { outtextxy_utf8(g_main_x + 16, g_draw_y, s
 static void draw_overlay_message(const char* utf8msg);
 
 static void present_frame() {
+    if (g_defer_present > 0) return;
     FlushBatchDraw();
+}
+
+static void begin_deferred_present() {
+    g_defer_present++;
+}
+
+static void end_deferred_present() {
+    if (g_defer_present > 0) g_defer_present--;
+    if (g_defer_present == 0) FlushBatchDraw();
 }
 
 static void draw_status_bar(const GameState* st, int acting_player_id, const char* phase) {
@@ -1380,6 +1391,7 @@ single_card_select:
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
+            begin_deferred_present();
             reset_draw_y();
             draw_team_hp_panel(NULL);
             for (int i = 0; i < show; i++) {
@@ -1391,6 +1403,7 @@ single_card_select:
             draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
             draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
             need_redraw = 0;
+            end_deferred_present();
         }
 
         if (!poll_mouse_message(&m)) {
@@ -1463,6 +1476,7 @@ multi_card_select:
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
+            begin_deferred_present();
             reset_draw_y();
             draw_team_hp_panel(NULL);
             char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select); settextcolor(BLACK); draw_line(header);
@@ -1484,6 +1498,7 @@ multi_card_select:
             // show total at bottom overlay as real-time statistic
             char tbuf[64]; snprintf(tbuf, sizeof(tbuf), "Total cards: %d/%d", total, max_select); draw_overlay_message(tbuf);
             need_redraw = 0;
+            end_deferred_present();
         }
 
         if (!poll_mouse_message(&m)) {
