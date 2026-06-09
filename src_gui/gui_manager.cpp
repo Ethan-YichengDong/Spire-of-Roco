@@ -46,6 +46,11 @@ static int g_records_panel_y = 376;
 static int g_records_panel_h = 260;
 static int g_is_fullscreen = 1;
 static int g_is_quitting = 0;
+static int g_last_canvas_w = 0;
+static int g_last_canvas_h = 0;
+
+static void draw_background_shell();
+static void present_frame();
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -82,6 +87,23 @@ static int bottom_button_y() {
     return g_ui_h - g_ui_margin - 96;
 }
 
+static void invalidate_ui_assets() {
+    g_ui_assets_ready = 0;
+}
+
+static void resize_canvas_for_mode(int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    if (g_last_canvas_w == width && g_last_canvas_h == height) {
+        update_layout();
+        return;
+    }
+    Resize(NULL, width, height);
+    g_last_canvas_w = width;
+    g_last_canvas_h = height;
+    invalidate_ui_assets();
+    update_layout();
+}
+
 static void apply_window_mode(int fullscreen) {
     HWND hwnd = GetHWnd();
     if (!hwnd) return;
@@ -92,19 +114,32 @@ static void apply_window_mode(int fullscreen) {
 
     if (fullscreen) {
         SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        MoveWindow(hwnd, 0, 0, screen_w, screen_h, TRUE);
+        resize_canvas_for_mode(screen_w, screen_h);
+        draw_background_shell();
+        present_frame();
         g_is_fullscreen = 1;
         return;
     }
 
-    int window_w = clamp_int((screen_w * 4) / 5, 1024, screen_w);
-    int window_h = clamp_int((screen_h * 4) / 5, 720, screen_h);
+    int client_w = clamp_int(screen_w / 2, 1024, screen_w);
+    int client_h = clamp_int(screen_h / 2, 720, screen_h);
+    if (client_w >= screen_w) client_w = clamp_int((screen_w * 4) / 5, 1024, screen_w);
+    if (client_h >= screen_h) client_h = clamp_int((screen_h * 4) / 5, 720, screen_h);
+    RECT wr = { 0, 0, client_w, client_h };
+    AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
+    int window_w = wr.right - wr.left;
+    int window_h = wr.bottom - wr.top;
     int window_x = (screen_w - window_w) / 2;
     int window_y = (screen_h - window_h) / 2;
     SetWindowLong(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
-    SetWindowPos(hwnd, HWND_NOTOPMOST, window_x, window_y, window_w, window_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, window_x, window_y, window_w, window_h, SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     ShowWindow(hwnd, SW_SHOWNORMAL);
     SetForegroundWindow(hwnd);
+    resize_canvas_for_mode(client_w, client_h);
+    draw_background_shell();
+    present_frame();
     g_is_fullscreen = 0;
 }
 
