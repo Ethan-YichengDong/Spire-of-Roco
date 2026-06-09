@@ -385,6 +385,17 @@ static void draw_status_bar(const GameState* st, int acting_player_id, const cha
     g_draw_y = g_main_y + 14;
 }
 
+static void draw_simple_status_bar(const char* title) {
+    update_layout();
+    draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
+    setlinecolor(RGB(70, 95, 130));
+    rectangle(0, 0, g_ui_w - 1, g_status_h);
+    settextcolor(RGB(26, 36, 45));
+    outtextxy_utf8(g_ui_margin, 12, title ? title : "Spire of Roco");
+    outtextxy_utf8(g_ui_w - 250, 12, "Esc: Quit  F11: Toggle");
+    g_draw_y = g_main_y + 14;
+}
+
 static void drain_easyx_input() {
     while (MouseHit()) {
         handle_global_hotkeys();
@@ -495,7 +506,7 @@ static void draw_button_with_check(int x, int y, int w, int h, const char* label
 // overlapping interactive UI elements (buttons, lists).
 static void draw_overlay_message_kind(const char* utf8msg, UiMessageKind kind) {
     update_layout();
-    if (utf8msg && utf8msg[0] != '\0') {
+    if (utf8msg && utf8msg[0] != '\0' && strncmp(g_message_history[0], utf8msg, sizeof(g_message_history[0])) != 0) {
         for (int i = UI_MESSAGE_HISTORY - 1; i > 0; i--) {
             strncpy(g_message_history[i], g_message_history[i - 1], sizeof(g_message_history[i]) - 1);
             g_message_history[i][sizeof(g_message_history[i]) - 1] = '\0';
@@ -562,10 +573,6 @@ static void draw_meter_colored(int x, int y, int w, int value, int max_value, CO
     }
     setlinecolor(RGB(68, 55, 35));
     rectangle(x, y, x + w, y + 14);
-}
-
-static void draw_button_disabled(int x, int y, int w, int h, const char* label) {
-    draw_button_state(x, y, w, h, label, 0, 0, 1);
 }
 
 static void draw_character_hud_row(const Character* ch, int x, int y, int w, const char* prefix, int active, int hover) {
@@ -775,7 +782,89 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
     draw_meter(g_main_x + 124, g_draw_y - 24, 220, p->energy, p->max_energy, &g_art_energy_fill);
     draw_line("Active:");
     print_character(&p->team[p->active_idx]);
-    present_frame();
+}
+
+static void draw_battle_plan_screen(GameState* st, int player_id, const ActionRecord* records, int record_count, const char* title,
+                                    int hover_action, int can_edit) {
+    begin_deferred_present();
+    draw_planning_shell(st, player_id, records, record_count, title);
+    int bx = g_main_x + 24, by = g_draw_y + 10, bw = 240, bh = UI_BUTTON_H;
+    draw_button_state(bx, by, bw, bh, "End Turn", 0, hover_action == 0, 0);
+    draw_button_state(bx, by + 55, bw, bh, "Play Card", 0, hover_action == 1, 0);
+    draw_button_state(bx, by + 110, bw, bh, "Switch Character", 0, hover_action == 2, 0);
+    draw_button_state(bx, by + 165, bw, bh, can_edit ? "Edit Card" : "Edit Action", 0, hover_action == 3, !can_edit);
+    draw_overlay_message_kind("Choose an action for this turn.", UI_MSG_HINT);
+    end_deferred_present();
+}
+
+static void draw_target_select_screen(GameState* st, int player_id, const ActionRecord* records, int record_count,
+                                      const Card* card, const Character* target_team, int hover_target) {
+    char buf[256];
+    begin_deferred_present();
+    draw_planning_shell(st, player_id, records, record_count, "Choose a target");
+    snprintf(buf, sizeof(buf), "Card: %s", card ? card->name : "");
+    draw_line(buf);
+    int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 58;
+    for (int t = 0; t < TEAM_SIZE; t++) {
+        int disabled = target_team && !target_team[t].is_alive && card && card->target_type != TARGET_SELF_SINGLE;
+        draw_character_option_panel(&target_team[t], t, tx, ty + t * (th + UI_GAP), tw, th, hover_target == t, hover_target == t, disabled);
+    }
+    draw_button_state(g_main_x + 16, bottom_button_y(), 120, 38, "Back", 0, hover_target == 10, 0);
+    draw_overlay_message_kind("Select a highlighted target or go back.", UI_MSG_HINT);
+    end_deferred_present();
+}
+
+static void draw_deck_build_screen(int player_id, int selected_count, int max_select, const int* qty, int show,
+                                   int selected_idx, int hover_card, int hover_minus, int hover_plus,
+                                   int hover_finish, int hover_confirm) {
+    char buf[256];
+    begin_deferred_present();
+    reset_draw_y();
+    draw_simple_status_bar("Deck Build");
+    draw_team_hp_panel(NULL);
+    snprintf(buf, sizeof(buf), "Deck Build - Player %d", player_id);
+    draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, buf);
+    g_draw_y += 32;
+    snprintf(buf, sizeof(buf), "Selected %d/%d", selected_count, max_select);
+    draw_line(buf);
+    int cx = g_main_x + 24;
+    int cy = g_draw_y + 8;
+    int card_w = qty ? clamp_int(g_main_w - 260, 360, 620) : clamp_int(g_main_w - 64, 360, 680);
+    int ch = UI_CARD_H;
+    for (int i = 0; i < show; i++) {
+        int y = cy + i * (ch + UI_GAP);
+        draw_card_panel(&g_all_cards[i], i, cx, y, card_w, ch, i == selected_idx || (qty && qty[i] > 0), hover_card == i, 0, qty ? qty[i] : 0);
+        if (qty) {
+            int x_minus = cx + card_w + UI_GAP;
+            int x_qty = x_minus + 42 + UI_GAP;
+            int x_plus = x_qty + 58 + UI_GAP;
+            draw_button_state(x_minus, y + 15, 42, 38, "-", 0, hover_minus == i, qty[i] <= 0);
+            snprintf(buf, sizeof(buf), "%d", qty[i]);
+            draw_button_state(x_qty, y + 15, 58, 38, buf, qty[i] > 0, 0, 0);
+            draw_button_state(x_plus, y + 15, 42, 38, "+", 0, hover_plus == i, selected_count >= max_select);
+        }
+    }
+    int footer_y = bottom_button_y();
+    draw_button_state(cx, footer_y, 150, 40, qty ? "End Building" : "Finish Build", 0, hover_finish, 0);
+    if (!qty) draw_button_state(cx + 162, footer_y, 130, 40, "Confirm", selected_idx >= 0, hover_confirm, 0);
+    snprintf(buf, sizeof(buf), "Total cards: %d/%d", selected_count, max_select);
+    draw_overlay_message_kind(buf, UI_MSG_HINT);
+    end_deferred_present();
+}
+
+static void draw_main_menu_screen(int selected_mode, int hover_choice, int hover_confirm) {
+    begin_deferred_present();
+    reset_draw_y();
+    draw_simple_status_bar("Main Menu");
+    draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, "Spire of Roco");
+    g_draw_y += 38;
+    draw_line("Select battle mode");
+    int bx = g_main_x + 52, by = g_draw_y + 12, bw = 320, bh = 64;
+    draw_button_state(bx, by, bw, bh, "Local PvP", selected_mode == MODE_PVP, hover_choice == MODE_PVP, 0);
+    draw_button_state(bx, by + 88, bw, bh, "AI PvE", selected_mode == MODE_PVE, hover_choice == MODE_PVE, 0);
+    draw_button_state(bx, by + 190, 140, 42, "Confirm", selected_mode >= 0, hover_confirm, 0);
+    draw_overlay_message_kind("F11 toggles fullscreen. Esc quits.", UI_MSG_HINT);
+    end_deferred_present();
 }
 
 #endif
@@ -848,39 +937,45 @@ void print_card(const Card* c, int idx) {
 #endif
 }
 
-void RenderGameBoard(GameState state) {
+static void draw_battle_screen(GameState state) {
 #ifdef USE_EASYX
+    begin_deferred_present();
     reset_draw_y();
     draw_status_bar(&state, state.current_turn, "Board");
     draw_team_hp_panel(&state);
     char buf[256];
-    snprintf(buf,sizeof(buf), "=== Game Board (Round:%d) Current Turn: Player %d ===", state.round_count, state.current_turn);
-    draw_line(buf);
+    snprintf(buf,sizeof(buf), "Game Board - Round %d", state.round_count);
+    draw_section_title(g_main_x + 16, g_draw_y, buf);
+    g_draw_y += 32;
 
-    snprintf(buf,sizeof(buf), "-- Player1: %s --", state.p1.name); draw_line(buf);
-    draw_line(" Active: "); print_character(&state.p1.team[state.p1.active_idx]);
-    snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count); draw_line(buf);
+    snprintf(buf,sizeof(buf), "Player 1: %s", state.p1.name); draw_line(buf);
+    draw_line("Active");
+    print_character(&state.p1.team[state.p1.active_idx]);
+    snprintf(buf,sizeof(buf), "Energy: %d/%d  Hand:%d  Draw:%d  Discard:%d", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count); draw_line(buf);
     draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p1.energy, state.p1.max_energy, &g_art_energy_fill);
     if (state.p1.hand_count > 0) {
-        draw_line(" Hand:");
-        for (int i = 0; i < state.p1.hand_count; i++) {
+        draw_line("Hand");
+        for (int i = 0; i < state.p1.hand_count && g_draw_y + UI_CARD_H < bottom_button_y(); i++) {
             print_card(&state.p1.hand[i], i);
         }
     }
 
-    snprintf(buf,sizeof(buf), "\n-- Player2: %s --", state.p2.name); draw_line(buf);
-    draw_line(" Active: "); print_character(&state.p2.team[state.p2.active_idx]);
-    snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count); draw_line(buf);
-    draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
-    if (state.p2.hand_count > 0) {
-        draw_line(" Hand:");
-        for (int i = 0; i < state.p2.hand_count; i++) {
-            print_card(&state.p2.hand[i], i);
-        }
+    if (g_draw_y + 172 < bottom_button_y()) {
+        g_draw_y += UI_GAP;
+        snprintf(buf,sizeof(buf), "Player 2: %s", state.p2.name); draw_line(buf);
+        draw_line("Active");
+        print_character(&state.p2.team[state.p2.active_idx]);
+        snprintf(buf,sizeof(buf), "Energy: %d/%d  Hand:%d  Draw:%d  Discard:%d", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count); draw_line(buf);
+        draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
     }
+    draw_overlay_message_kind("Battle state refreshed.", UI_MSG_HINT);
+    end_deferred_present();
+#endif
+}
 
-    draw_line("========================================");
-    present_frame();
+void RenderGameBoard(GameState state) {
+#ifdef USE_EASYX
+    draw_battle_screen(state);
 #else
     printf("\n=== Game Board (Round:%d) Current Turn: Player %d ===\n", state.round_count, state.current_turn);
 
@@ -1183,22 +1278,32 @@ Action GetPlannedInputFromUI(int player_id, GameState state, const ActionRecord*
 
 main_menu:
     p = mutable_player(&state, player_id);
-    draw_planning_shell(&state, player_id, records, record_count, "Plan your turn");
     layout_version = g_ui_layout_version;
     {
-        int bx = g_main_x + 24, by = g_draw_y + 10, bw = 220, bh = 44;
-        draw_button(bx, by, bw, bh, "End Turn");
-        draw_button(bx, by + 55, bw, bh, "Play Card");
-        draw_button(bx, by + 110, bw, bh, "Switch Character");
         int can_edit = has_card_record(records, record_count);
-        if (can_edit) draw_button(bx, by + 165, bw, bh, "Edit Card");
-        else draw_button_disabled(bx, by + 165, bw, bh, "Edit Action");
+        int bx = g_main_x + 24, by = g_draw_y + 10, bw = 240, bh = UI_BUTTON_H;
+        int hover_action = -1;
+        int need_redraw = 1;
         while (1) {
+            if (need_redraw) {
+                draw_battle_plan_screen(&state, player_id, records, record_count, "Plan your turn", hover_action, can_edit);
+                bx = g_main_x + 24; by = g_draw_y + 10; bw = 240; bh = UI_BUTTON_H;
+                need_redraw = 0;
+            }
             if (!poll_mouse_message(&m)) {
                 if (layout_changed_since(&layout_version)) goto main_menu;
                 continue;
             }
             if (layout_changed_since(&layout_version)) goto main_menu;
+            int new_hover = -1;
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) new_hover = 0;
+            else if (point_in_rect(m.x, m.y, bx, by + 55, bw, bh)) new_hover = 1;
+            else if (point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) new_hover = 2;
+            else if (point_in_rect(m.x, m.y, bx, by + 165, bw, bh)) new_hover = 3;
+            if (new_hover != hover_action) {
+                hover_action = new_hover;
+                need_redraw = 1;
+            }
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) {
                 act.type = ACTION_END_TURN;
@@ -1206,7 +1311,7 @@ main_menu:
             }
             if (point_in_rect(m.x, m.y, bx, by + 55, bw, bh)) {
                 if (p->hand_count <= 0) {
-                    draw_overlay_message("Hand empty");
+                    draw_overlay_message_kind("Hand empty", UI_MSG_ERROR);
                     continue;
                 }
                 goto card_select;
@@ -1222,36 +1327,57 @@ main_menu:
 
 card_select:
     p = mutable_player(&state, player_id);
-    draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
     layout_version = g_ui_layout_version;
     {
-        int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 380, 620), ch = 40;
+        int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 380, 680), ch = UI_CARD_H;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
-        for (int i = 0; i < p->hand_count; i++) {
-            snprintf(buf, sizeof(buf), "[%d] %s  Cost:%d", i, p->hand[i].name, p->hand[i].energy_cost);
-            if (p->energy >= p->hand[i].energy_cost) {
-                draw_button(cx, cy + i * (ch + 6), cw, ch, buf);
-            } else {
-                draw_button_disabled(cx, cy + i * (ch + 6), cw, ch, buf);
-            }
-        }
-        draw_button(back_x, back_y, back_w, back_h, "Back");
+        int hover_card = -1;
+        int hover_back = 0;
+        int need_redraw = 1;
         while (1) {
+            if (need_redraw) {
+                begin_deferred_present();
+                draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
+                cx = g_main_x + 24; cy = g_draw_y + 10; cw = clamp_int(g_main_w - 64, 380, 680); ch = UI_CARD_H;
+                back_x = g_main_x + 16; back_y = bottom_button_y();
+                for (int i = 0; i < p->hand_count; i++) {
+                    draw_card_panel(&p->hand[i], i, cx, cy + i * (ch + UI_GAP), cw, ch, 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
+                }
+                draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
+                draw_overlay_message_kind("Choose a playable card.", UI_MSG_HINT);
+                end_deferred_present();
+                need_redraw = 0;
+            }
             if (!poll_mouse_message(&m)) {
                 if (layout_changed_since(&layout_version)) goto card_select;
                 continue;
             }
             if (layout_changed_since(&layout_version)) goto card_select;
+            int new_hover_card = -1;
+            int new_hover_back = 0;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
+            for (int i = 0; i < p->hand_count; i++) {
+                int ry = cy + i * (ch + UI_GAP);
+                if (point_in_rect(m.x, m.y, cx, ry, cw, ch)) {
+                    new_hover_card = i;
+                    break;
+                }
+            }
+            if (new_hover_card != hover_card || new_hover_back != hover_back) {
+                hover_card = new_hover_card;
+                hover_back = new_hover_back;
+                need_redraw = 1;
+            }
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
                 goto main_menu;
             }
             for (int i = 0; i < p->hand_count; i++) {
-                int ry = cy + i * (ch + 6);
+                int ry = cy + i * (ch + UI_GAP);
                 if (!point_in_rect(m.x, m.y, cx, ry, cw, ch)) continue;
                 if (p->energy < p->hand[i].energy_cost) {
-                    draw_overlay_message("Not enough energy");
+                    draw_overlay_message_kind("Not enough energy", UI_MSG_ERROR);
                     break;
                 }
                 act.type = ACTION_PLAY_CARD;
@@ -1268,7 +1394,6 @@ card_select:
 
 target_select:
     p = mutable_player(&state, player_id);
-    draw_planning_shell(&state, player_id, records, record_count, "Choose a target");
     layout_version = g_ui_layout_version;
     {
         Card* c = &p->hand[act.card_hand_idx];
@@ -1278,32 +1403,45 @@ target_select:
         } else {
             target_team = (player_id == state.p1.player_id) ? state.p2.team : state.p1.team;
         }
-        snprintf(buf, sizeof(buf), "Card: %s", c->name);
-        draw_line(buf);
-        int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 46;
+        int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 58;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
-        for (int t = 0; t < TEAM_SIZE; t++) {
-            snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", t, target_team[t].name, target_team[t].hp, target_team[t].max_hp);
-            if (target_team[t].is_alive || c->target_type == TARGET_SELF_SINGLE) draw_button(tx, ty + t * (th + 8), tw, th, buf);
-            else draw_button_disabled(tx, ty + t * (th + 8), tw, th, buf);
-        }
-        draw_button(back_x, back_y, back_w, back_h, "Back");
+        int hover_target = -1;
+        int need_redraw = 1;
         while (1) {
+            if (need_redraw) {
+                draw_target_select_screen(&state, player_id, records, record_count, c, target_team, hover_target);
+                tx = g_main_x + 48; ty = g_draw_y + 20; tw = clamp_int(g_main_w - 96, 360, 620); th = 58;
+                back_x = g_main_x + 16; back_y = bottom_button_y();
+                need_redraw = 0;
+            }
             if (!poll_mouse_message(&m)) {
                 if (layout_changed_since(&layout_version)) goto target_select;
                 continue;
             }
             if (layout_changed_since(&layout_version)) goto target_select;
+            int new_hover = -1;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover = 10;
+            for (int t = 0; t < TEAM_SIZE; t++) {
+                int ry = ty + t * (th + UI_GAP);
+                if (point_in_rect(m.x, m.y, tx, ry, tw, th)) {
+                    new_hover = t;
+                    break;
+                }
+            }
+            if (new_hover != hover_target) {
+                hover_target = new_hover;
+                need_redraw = 1;
+            }
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
                 goto main_menu;
             }
             for (int t = 0; t < TEAM_SIZE; t++) {
-                int ry = ty + t * (th + 8);
+                int ry = ty + t * (th + UI_GAP);
                 if (!point_in_rect(m.x, m.y, tx, ry, tw, th)) continue;
                 if (!target_team[t].is_alive && c->target_type != TARGET_SELF_SINGLE) {
-                    draw_overlay_message("Target is defeated");
+                    draw_overlay_message_kind("Target is defeated", UI_MSG_ERROR);
                     break;
                 }
                 act.target_idx = t;
@@ -1314,33 +1452,57 @@ target_select:
 
 switch_select:
     p = mutable_player(&state, player_id);
-    draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
     layout_version = g_ui_layout_version;
     {
-        int sx = g_main_x + 48, sy = g_draw_y + 20, sw = clamp_int(g_main_w - 96, 360, 620), sh = 50;
+        int sx = g_main_x + 48, sy = g_draw_y + 20, sw = clamp_int(g_main_w - 96, 360, 620), sh = 58;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
-        for (int i = 0; i < TEAM_SIZE; i++) {
-            snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", i, p->team[i].name, p->team[i].hp, p->team[i].max_hp);
-            if (p->team[i].is_alive) draw_button(sx, sy + i * (sh + 8), sw, sh, buf);
-            else draw_button_disabled(sx, sy + i * (sh + 8), sw, sh, buf);
-        }
-        draw_button(back_x, back_y, back_w, back_h, "Back");
+        int hover_char = -1;
+        int hover_back = 0;
+        int need_redraw = 1;
         while (1) {
+            if (need_redraw) {
+                begin_deferred_present();
+                draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
+                sx = g_main_x + 48; sy = g_draw_y + 20; sw = clamp_int(g_main_w - 96, 360, 620); sh = 58;
+                back_x = g_main_x + 16; back_y = bottom_button_y();
+                for (int i = 0; i < TEAM_SIZE; i++) {
+                    draw_character_option_panel(&p->team[i], i, sx, sy + i * (sh + UI_GAP), sw, sh, i == p->active_idx, hover_char == i, !p->team[i].is_alive);
+                }
+                draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
+                draw_overlay_message_kind("Choose a living team member.", UI_MSG_HINT);
+                end_deferred_present();
+                need_redraw = 0;
+            }
             if (!poll_mouse_message(&m)) {
                 if (layout_changed_since(&layout_version)) goto switch_select;
                 continue;
             }
             if (layout_changed_since(&layout_version)) goto switch_select;
+            int new_hover_char = -1;
+            int new_hover_back = 0;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
+            for (int i = 0; i < TEAM_SIZE; i++) {
+                int ry = sy + i * (sh + UI_GAP);
+                if (point_in_rect(m.x, m.y, sx, ry, sw, sh)) {
+                    new_hover_char = i;
+                    break;
+                }
+            }
+            if (new_hover_char != hover_char || new_hover_back != hover_back) {
+                hover_char = new_hover_char;
+                hover_back = new_hover_back;
+                need_redraw = 1;
+            }
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
                 goto main_menu;
             }
             for (int i = 0; i < TEAM_SIZE; i++) {
-                int ry = sy + i * (sh + 8);
+                int ry = sy + i * (sh + UI_GAP);
                 if (!point_in_rect(m.x, m.y, sx, ry, sw, sh)) continue;
                 if (!p->team[i].is_alive) {
-                    draw_overlay_message("Character is defeated");
+                    draw_overlay_message_kind("Character is defeated", UI_MSG_ERROR);
                     break;
                 }
                 act.type = ACTION_SWITCH_CHAR;
@@ -1352,6 +1514,7 @@ switch_select:
     }
 
 edit_select:
+    begin_deferred_present();
     draw_planning_shell(&state, player_id, records, record_count, "Edit an action");
     layout_version = g_ui_layout_version;
     {
@@ -1367,6 +1530,7 @@ edit_select:
             display_count++;
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
+        end_deferred_present();
         while (1) {
             if (!poll_mouse_message(&m)) {
                 if (layout_changed_since(&layout_version)) goto edit_select;
@@ -1534,26 +1698,36 @@ single_character_select:
 int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
 multi_character_select:
-    reset_draw_y();
     int layout_version = g_ui_layout_version;
-    char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int sx = g_main_x + 24, sy = g_draw_y + 10, sw = clamp_int(g_main_w - 64, 360, 620), sh = 40;
-    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
+    int sx = g_main_x + 24, sy = g_main_y + 128, sw = clamp_int(g_main_w - 64, 360, 680), sh = 58;
+    int confirm_x = sx, confirm_y = bottom_button_y();
     int* selected = (int*)malloc(sizeof(int) * g_char_count);
     memset(selected, 0, sizeof(int) * g_char_count);
+    int hover_idx = -1;
+    int hover_confirm = 0;
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
+            char header[160];
             reset_draw_y();
+            draw_simple_status_bar("Character Draft");
             draw_team_hp_panel(st);
+            snprintf(header, sizeof(header), "Character Draft - Player %d", player_id);
+            draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, header);
+            g_draw_y += 34;
+            snprintf(header, sizeof(header), "Choose up to %d", max_select);
+            draw_line(header);
+            sx = g_main_x + 24; sy = g_draw_y + 8; sw = clamp_int(g_main_w - 64, 360, 680); sh = 58;
+            confirm_x = sx; confirm_y = bottom_button_y();
+            begin_deferred_present();
             for (int i = 0; i < g_char_count; i++) {
-                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-                if (selected[i]) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
-                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+                draw_character_option_panel(&g_all_characters[i], i, sx, sy + i * (sh + UI_GAP), sw, sh, selected[i], hover_idx == i, 0);
             }
-            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            draw_button_state(confirm_x, confirm_y, 140, 40, "Confirm", 0, hover_confirm, 0);
+            draw_overlay_message_kind("Select characters for your team.", UI_MSG_HINT);
+            end_deferred_present();
             need_redraw = 0;
         }
 
@@ -1568,13 +1742,28 @@ multi_character_select:
             free(selected);
             goto multi_character_select;
         }
+        int new_hover_idx = -1;
+        int new_hover_confirm = 0;
+        for (int i = 0; i < g_char_count; i++) {
+            int ry = sy + i * (sh + UI_GAP);
+            if (point_in_rect(m.x, m.y, sx, ry, sw, sh)) {
+                new_hover_idx = i;
+                break;
+            }
+        }
+        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) new_hover_confirm = 1;
+        if (new_hover_idx != hover_idx || new_hover_confirm != hover_confirm) {
+            hover_idx = new_hover_idx;
+            hover_confirm = new_hover_confirm;
+            need_redraw = 1;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
-                int rx = sx, ry = sy + i * (sh + 6);
+                int rx = sx, ry = sy + i * (sh + UI_GAP);
                 if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
             }
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
                 int count = 0;
                 for (int i = 0; i < g_char_count && count < max_select; i++) { if (selected[i]) out_indices[count++] = i; }
                 free(selected);
@@ -1604,34 +1793,31 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
     // legacy single-select behavior preserved for compatibility
 single_card_select:
-    reset_draw_y();
     int layout_version = g_ui_layout_version;
-    char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
-    int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 340, 620), ch = 40;
-    int max_rows = (bottom_button_y() - cy - 80) / (ch + 6);
-    if (max_rows < 4) max_rows = 4;
-    if (max_rows > 20) max_rows = 20;
+    int ch = UI_CARD_H;
+    int cy = g_main_y + 108;
+    int max_rows = (bottom_button_y() - cy - 12) / (ch + UI_GAP);
+    if (max_rows < 3) max_rows = 3;
+    if (max_rows > 8) max_rows = 8;
     int show = g_card_count < max_rows ? g_card_count : max_rows;
-    int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
+    int cx = g_main_x + 24, cw = clamp_int(g_main_w - 64, 360, 680);
+    int confirm_x = cx, confirm_y = bottom_button_y();
     int selected_idx = -1;
+    int hover_card = -1;
+    int hover_finish = 0;
+    int hover_confirm = 0;
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
-            begin_deferred_present();
-            reset_draw_y();
-            draw_team_hp_panel(NULL);
-            for (int i = 0; i < show; i++) {
-                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-                if (i == selected_idx) draw_button_with_check(cx, cy + i * (ch + 6), cw, ch, tmp);
-                else draw_button(cx, cy + i * (ch + 6), cw, ch, tmp);
-            }
-            // add finish and confirm buttons
-            draw_button(confirm_x, confirm_y, 120, 40, "Finish Build");
-            draw_button(confirm_x, confirm_y + 60, 120, 40, "Confirm");
+            draw_deck_build_screen(player_id, current_deck_size, MAX_DECK_SIZE, NULL, show, selected_idx,
+                                   hover_card, -1, -1, hover_finish, hover_confirm);
+            cy = g_main_y + 108;
+            cx = g_main_x + 24;
+            cw = clamp_int(g_main_w - 64, 360, 680);
+            confirm_x = cx; confirm_y = bottom_button_y();
             need_redraw = 0;
-            end_deferred_present();
         }
 
         if (!poll_mouse_message(&m)) {
@@ -1639,10 +1825,28 @@ single_card_select:
             continue;
         }
         if (layout_changed_since(&layout_version)) goto single_card_select;
+        int new_hover_card = -1;
+        int new_hover_finish = 0;
+        int new_hover_confirm = 0;
+        for (int i = 0; i < show; i++) {
+            int ry = cy + i * (ch + UI_GAP);
+            if (point_in_rect(m.x, m.y, cx, ry, cw, ch)) {
+                new_hover_card = i;
+                break;
+            }
+        }
+        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) new_hover_finish = 1;
+        if (point_in_rect(m.x, m.y, confirm_x + 162, confirm_y, 130, 40)) new_hover_confirm = 1;
+        if (new_hover_card != hover_card || new_hover_finish != hover_finish || new_hover_confirm != hover_confirm) {
+            hover_card = new_hover_card;
+            hover_finish = new_hover_finish;
+            hover_confirm = new_hover_confirm;
+            need_redraw = 1;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                int rx = cx, ry = cy + i * (ch + 6);
+                int rx = cx, ry = cy + i * (ch + UI_GAP);
                 if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
                     selected_idx = i;
                     need_redraw = 1;
@@ -1651,16 +1855,16 @@ single_card_select:
                 }
             }
             // finish button
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) {
                 return -1;
             }
             // confirm button
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y + 60, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x + 162, confirm_y, 130, 40)) {
                 if (selected_idx >= 0) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message(chosen);
+                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message_kind(chosen, UI_MSG_CONFIRM);
                     return selected_idx;
                 } else {
-                    draw_overlay_message("No card selected");
+                    draw_overlay_message_kind("No card selected", UI_MSG_ERROR);
                     need_redraw = 1;
                 }
             }
@@ -1688,45 +1892,36 @@ single_card_select:
 int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
 multi_card_select:
-    reset_draw_y();
     int layout_version = g_ui_layout_version;
-    char buf[256]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Deck Building (max %d cards)", player_id, max_select); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int show = g_card_count < 8 ? g_card_count : 8; // limit UI to 8 unique card types per spec
-    int cx = g_main_x + 24, cy = g_draw_y + 10, card_w = clamp_int(g_main_w - 250, 300, 560), card_h = 40;
-    int minus_w = 40, qty_w = 60, plus_w = 40;
-    int line_h = card_h + 6;
-    int confirm_x = cx, confirm_y = cy + show * line_h + 60;
+    int card_h = UI_CARD_H;
+    int cy = g_main_y + 108;
+    int max_rows = (bottom_button_y() - cy - 12) / (card_h + UI_GAP);
+    if (max_rows < 3) max_rows = 3;
+    if (max_rows > 8) max_rows = 8;
+    int show = g_card_count < max_rows ? g_card_count : max_rows;
+    int cx = g_main_x + 24, card_w = clamp_int(g_main_w - 260, 360, 620);
+    int minus_w = 42, qty_w = 58, plus_w = 42;
+    int line_h = card_h + UI_GAP;
+    int confirm_x = cx, confirm_y = bottom_button_y();
     int* qty = (int*)calloc(show, sizeof(int));
     if (!qty) { if (out_count) *out_count = 0; return 0; }
     int total = 0;
+    int hover_card = -1;
+    int hover_minus = -1;
+    int hover_plus = -1;
+    int hover_finish = 0;
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
-            begin_deferred_present();
-            reset_draw_y();
-            draw_team_hp_panel(NULL);
-            char header[128]; snprintf(header, sizeof(header), "Player %d Deck Building - Selected %d/%d", player_id, total, max_select); settextcolor(BLACK); draw_line(header);
-            for (int i = 0; i < show; i++) {
-                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s", i, g_all_cards[i].name);
-                int x_label = cx;
-                int x_minus = cx + card_w + 8;
-                int x_qty = x_minus + minus_w + 8;
-                int x_plus = x_qty + qty_w + 8;
-                // draw card label
-                draw_button(x_label, cy + i * line_h, card_w, card_h, tmp);
-                // draw minus, qty, plus controls
-                char mbuf[16]; snprintf(mbuf, sizeof(mbuf), "-"); draw_button(x_minus, cy + i * line_h, minus_w, card_h, mbuf);
-                char qbuf[32]; snprintf(qbuf, sizeof(qbuf), "%d", qty[i]); draw_button(x_qty, cy + i * line_h, qty_w, card_h, qbuf);
-                char pbuf[16]; snprintf(pbuf, sizeof(pbuf), "+"); draw_button(x_plus, cy + i * line_h, plus_w, card_h, pbuf);
-            }
-            // footer buttons
-            draw_button(confirm_x, confirm_y, 140, 40, "End Building");
-            // show total at bottom overlay as real-time statistic
-            char tbuf[64]; snprintf(tbuf, sizeof(tbuf), "Total cards: %d/%d", total, max_select); draw_overlay_message(tbuf);
+            draw_deck_build_screen(player_id, total, max_select, qty, show, -1,
+                                   hover_card, hover_minus, hover_plus, hover_finish, 0);
+            cy = g_main_y + 108;
+            cx = g_main_x + 24;
+            card_w = clamp_int(g_main_w - 260, 360, 620);
+            confirm_x = cx; confirm_y = bottom_button_y();
             need_redraw = 0;
-            end_deferred_present();
         }
 
         if (!poll_mouse_message(&m)) {
@@ -1740,24 +1935,45 @@ multi_card_select:
             free(qty);
             goto multi_card_select;
         }
+        int new_hover_card = -1;
+        int new_hover_minus = -1;
+        int new_hover_plus = -1;
+        int new_hover_finish = 0;
+        for (int i = 0; i < show; i++) {
+            int x_minus = cx + card_w + UI_GAP;
+            int x_qty = x_minus + minus_w + UI_GAP;
+            int x_plus = x_qty + qty_w + UI_GAP;
+            int ry = cy + i * line_h;
+            if (point_in_rect(m.x, m.y, cx, ry, card_w, card_h)) new_hover_card = i;
+            if (point_in_rect(m.x, m.y, x_minus, ry + 15, minus_w, 38)) new_hover_minus = i;
+            if (point_in_rect(m.x, m.y, x_plus, ry + 15, plus_w, 38)) new_hover_plus = i;
+        }
+        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) new_hover_finish = 1;
+        if (new_hover_card != hover_card || new_hover_minus != hover_minus || new_hover_plus != hover_plus || new_hover_finish != hover_finish) {
+            hover_card = new_hover_card;
+            hover_minus = new_hover_minus;
+            hover_plus = new_hover_plus;
+            hover_finish = new_hover_finish;
+            need_redraw = 1;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                int x_minus = cx + card_w + 8;
-                int x_qty = x_minus + minus_w + 8;
-                int x_plus = x_qty + qty_w + 8;
+                int x_minus = cx + card_w + UI_GAP;
+                int x_qty = x_minus + minus_w + UI_GAP;
+                int x_plus = x_qty + qty_w + UI_GAP;
                 int ry = cy + i * line_h;
-                if (point_in_rect(m.x, m.y, x_minus, ry, minus_w, card_h)) {
+                if (point_in_rect(m.x, m.y, x_minus, ry + 15, minus_w, 38)) {
                     if (qty[i] > 0) { qty[i]--; total--; }
                     need_redraw = 1; handled = 1; break;
                 }
-                if (point_in_rect(m.x, m.y, x_plus, ry, plus_w, card_h)) {
+                if (point_in_rect(m.x, m.y, x_plus, ry + 15, plus_w, 38)) {
                     if (total < max_select) { qty[i]++; total++; }
-                    else draw_overlay_message("Cannot exceed deck limit");
+                    else draw_overlay_message_kind("Cannot exceed deck limit", UI_MSG_ERROR);
                     need_redraw = 1; handled = 1; break;
                 }
             }
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) {
                 // End Building: finalize selection and return negative count to signal engine to stop further rounds
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
@@ -1817,35 +2033,47 @@ multi_card_select:
 int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
 mode_menu:
-    reset_draw_y(); draw_line("Main Menu: Select mode:");
     int layout_version = g_ui_layout_version;
     int bx = g_main_x + 52, by = g_draw_y + 10, bw = 280, bh = 64;
-    int confirm_x = bx, confirm_y = by + 200; // place confirm below options
+    int confirm_x = bx, confirm_y = by + 200;
     int selected_mode = -1;
+    int hover_choice = -1;
+    int hover_confirm = 0;
+    int need_redraw = 1;
     MOUSEMSG m;
     while (1) {
-        // redraw options
-        if (selected_mode == MODE_PVP) draw_button_with_check(bx, by, bw, bh, "Local PvP (default)");
-        else draw_button(bx, by, bw, bh, "Local PvP (default)");
-        if (selected_mode == MODE_PVE) draw_button_with_check(bx, by + 90, bw, bh, "AI PvE");
-        else draw_button(bx, by + 90, bw, bh, "AI PvE");
-        draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+        if (need_redraw) {
+            draw_main_menu_screen(selected_mode, hover_choice, hover_confirm);
+            bx = g_main_x + 52; by = g_draw_y + 12; bw = 320; bh = 64;
+            confirm_x = bx; confirm_y = by + 190;
+            need_redraw = 0;
+        }
 
         if (!poll_mouse_message(&m)) {
             if (layout_changed_since(&layout_version)) goto mode_menu;
             continue;
         }
         if (layout_changed_since(&layout_version)) goto mode_menu;
+        int new_hover_choice = -1;
+        int new_hover_confirm = 0;
+        if (point_in_rect(m.x, m.y, bx, by, bw, bh)) new_hover_choice = MODE_PVP;
+        else if (point_in_rect(m.x, m.y, bx, by + 88, bw, bh)) new_hover_choice = MODE_PVE;
+        else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 42)) new_hover_confirm = 1;
+        if (new_hover_choice != hover_choice || new_hover_confirm != hover_confirm) {
+            hover_choice = new_hover_choice;
+            hover_confirm = new_hover_confirm;
+            need_redraw = 1;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; }
-            else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; }
-            else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; need_redraw = 1; }
+            else if (point_in_rect(m.x, m.y, bx, by + 88, bw, bh)) { selected_mode = MODE_PVE; need_redraw = 1; }
+            else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 42)) {
                 if (selected_mode == MODE_PVP || selected_mode == MODE_PVE) {
                     char msg[64]; snprintf(msg, sizeof(msg), "Mode confirmed: %s", (selected_mode == MODE_PVE) ? "PvE" : "PvP");
-                    draw_overlay_message(msg);
+                    draw_overlay_message_kind(msg, UI_MSG_CONFIRM);
                     return selected_mode;
                 } else {
-                    draw_overlay_message("No mode selected");
+                    draw_overlay_message_kind("No mode selected", UI_MSG_ERROR);
                 }
             }
         }
