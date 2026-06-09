@@ -62,6 +62,7 @@ static int g_message_count = 0;
 
 static void draw_background_shell();
 static void present_frame();
+static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh);
 static int layout_changed_since(int* seen_version);
 
 static int clamp_int(int value, int min_value, int max_value) {
@@ -275,6 +276,25 @@ typedef enum {
     UI_MSG_CONFIRM,
     UI_MSG_ERROR
 } UiMessageKind;
+
+typedef struct {
+    int x;
+    int y;
+    int w;
+    int h;
+} UiRect;
+
+static void set_ui_rect(UiRect* rect, int x, int y, int w, int h) {
+    if (!rect) return;
+    rect->x = x;
+    rect->y = y;
+    rect->w = w;
+    rect->h = h;
+}
+
+static int point_in_ui_rect(int x, int y, const UiRect* rect) {
+    return rect && point_in_rect(x, y, rect->x, rect->y, rect->w, rect->h);
+}
 
 static COLORREF element_color(ElementType element) {
     switch (element) {
@@ -841,7 +861,9 @@ static void draw_target_select_screen(GameState* st, int player_id, const Action
 
 static void draw_deck_build_screen(int player_id, int selected_count, int max_select, const int* qty, int show,
                                    int selected_idx, int hover_card, int hover_minus, int hover_plus,
-                                   int hover_finish, int hover_confirm) {
+                                   int hover_finish, int hover_confirm,
+                                   UiRect* card_rects, UiRect* minus_rects, UiRect* plus_rects,
+                                   UiRect* finish_rect, UiRect* confirm_rect) {
     char buf[256];
     begin_deferred_present();
     reset_draw_y();
@@ -858,11 +880,14 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     int ch = UI_CARD_H;
     for (int i = 0; i < show; i++) {
         int y = cy + i * (ch + UI_GAP);
+        set_ui_rect(card_rects ? &card_rects[i] : NULL, cx, y, card_w, ch);
         draw_card_panel(&g_all_cards[i], i, cx, y, card_w, ch, i == selected_idx || (qty && qty[i] > 0), hover_card == i, 0, qty ? qty[i] : 0);
         if (qty) {
             int x_minus = cx + card_w + UI_GAP;
             int x_qty = x_minus + 42 + UI_GAP;
             int x_plus = x_qty + 58 + UI_GAP;
+            set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, y + 15, 42, 38);
+            set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, y + 15, 42, 38);
             draw_button_state(x_minus, y + 15, 42, 38, "-", 0, hover_minus == i, qty[i] <= 0);
             snprintf(buf, sizeof(buf), "%d", qty[i]);
             draw_button_state(x_qty, y + 15, 58, 38, buf, qty[i] > 0, 0, 0);
@@ -870,6 +895,8 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
         }
     }
     int footer_y = bottom_button_y();
+    set_ui_rect(finish_rect, cx, footer_y, 150, 40);
+    set_ui_rect(confirm_rect, cx + 162, footer_y, 130, 40);
     draw_button_state(cx, footer_y, 150, 40, qty ? "End Building" : "Finish Build", 0, hover_finish, 0);
     if (!qty) draw_button_state(cx + 162, footer_y, 130, 40, "Confirm", selected_idx >= 0, hover_confirm, 0);
     snprintf(buf, sizeof(buf), "Total cards: %d/%d", selected_count, max_select);
@@ -1832,14 +1859,11 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 single_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
-    int ch = UI_CARD_H;
-    int cy = g_main_y + 108;
-    int max_rows = (bottom_button_y() - cy - 12) / (ch + UI_GAP);
-    if (max_rows < 3) max_rows = 3;
-    if (max_rows > 8) max_rows = 8;
+    int max_rows = 8;
     int show = g_card_count < max_rows ? g_card_count : max_rows;
-    int cx = g_main_x + 24, cw = clamp_int(g_main_w - 64, 360, 680);
-    int confirm_x = cx, confirm_y = bottom_button_y();
+    UiRect card_rects[MAX_GLOBAL_CARDS] = {};
+    UiRect finish_rect = {};
+    UiRect confirm_rect = {};
     int selected_idx = -1;
     int hover_card = -1;
     int hover_finish = 0;
@@ -1849,11 +1873,8 @@ single_card_select:
     while (1) {
         if (need_redraw) {
             draw_deck_build_screen(player_id, current_deck_size, MAX_DECK_SIZE, NULL, show, selected_idx,
-                                   hover_card, -1, -1, hover_finish, hover_confirm);
-            cy = g_main_y + 108;
-            cx = g_main_x + 24;
-            cw = clamp_int(g_main_w - 64, 360, 680);
-            confirm_x = cx; confirm_y = bottom_button_y();
+                                   hover_card, -1, -1, hover_finish, hover_confirm,
+                                   card_rects, NULL, NULL, &finish_rect, &confirm_rect);
             need_redraw = 0;
         }
 
@@ -1866,14 +1887,13 @@ single_card_select:
         int new_hover_finish = 0;
         int new_hover_confirm = 0;
         for (int i = 0; i < show; i++) {
-            int ry = cy + i * (ch + UI_GAP);
-            if (point_in_rect(m.x, m.y, cx, ry, cw, ch)) {
+            if (point_in_ui_rect(m.x, m.y, &card_rects[i])) {
                 new_hover_card = i;
                 break;
             }
         }
-        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) new_hover_finish = 1;
-        if (point_in_rect(m.x, m.y, confirm_x + 162, confirm_y, 130, 40)) new_hover_confirm = 1;
+        if (point_in_ui_rect(m.x, m.y, &finish_rect)) new_hover_finish = 1;
+        if (point_in_ui_rect(m.x, m.y, &confirm_rect)) new_hover_confirm = 1;
         if (new_hover_card != hover_card || new_hover_finish != hover_finish || new_hover_confirm != hover_confirm) {
             hover_card = new_hover_card;
             hover_finish = new_hover_finish;
@@ -1883,8 +1903,7 @@ single_card_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                int rx = cx, ry = cy + i * (ch + UI_GAP);
-                if (point_in_rect(m.x, m.y, rx, ry, cw, ch)) {
+                if (point_in_ui_rect(m.x, m.y, &card_rects[i])) {
                     selected_idx = i;
                     need_redraw = 1;
                     handled = 1;
@@ -1892,11 +1911,11 @@ single_card_select:
                 }
             }
             // finish button
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) {
+            if (!handled && point_in_ui_rect(m.x, m.y, &finish_rect)) {
                 return -1;
             }
             // confirm button
-            if (!handled && point_in_rect(m.x, m.y, confirm_x + 162, confirm_y, 130, 40)) {
+            if (!handled && point_in_ui_rect(m.x, m.y, &confirm_rect)) {
                 if (selected_idx >= 0) {
                     char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message_kind(chosen, UI_MSG_CONFIRM);
                     return selected_idx;
@@ -1931,16 +1950,12 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 multi_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int card_h = UI_CARD_H;
-    int cy = g_main_y + 108;
-    int max_rows = (bottom_button_y() - cy - 12) / (card_h + UI_GAP);
-    if (max_rows < 3) max_rows = 3;
-    if (max_rows > 8) max_rows = 8;
+    int max_rows = 8;
     int show = g_card_count < max_rows ? g_card_count : max_rows;
-    int cx = g_main_x + 24, card_w = clamp_int(g_main_w - 260, 360, 620);
-    int minus_w = 42, qty_w = 58, plus_w = 42;
-    int line_h = card_h + UI_GAP;
-    int confirm_x = cx, confirm_y = bottom_button_y();
+    UiRect card_rects[MAX_GLOBAL_CARDS] = {};
+    UiRect minus_rects[MAX_GLOBAL_CARDS] = {};
+    UiRect plus_rects[MAX_GLOBAL_CARDS] = {};
+    UiRect finish_rect = {};
     int* qty = (int*)calloc(show, sizeof(int));
     if (!qty) { if (out_count) *out_count = 0; return 0; }
     int total = 0;
@@ -1953,11 +1968,8 @@ multi_card_select:
     while (1) {
         if (need_redraw) {
             draw_deck_build_screen(player_id, total, max_select, qty, show, -1,
-                                   hover_card, hover_minus, hover_plus, hover_finish, 0);
-            cy = g_main_y + 108;
-            cx = g_main_x + 24;
-            card_w = clamp_int(g_main_w - 260, 360, 620);
-            confirm_x = cx; confirm_y = bottom_button_y();
+                                   hover_card, hover_minus, hover_plus, hover_finish, 0,
+                                   card_rects, minus_rects, plus_rects, &finish_rect, NULL);
             need_redraw = 0;
         }
 
@@ -1977,15 +1989,11 @@ multi_card_select:
         int new_hover_plus = -1;
         int new_hover_finish = 0;
         for (int i = 0; i < show; i++) {
-            int x_minus = cx + card_w + UI_GAP;
-            int x_qty = x_minus + minus_w + UI_GAP;
-            int x_plus = x_qty + qty_w + UI_GAP;
-            int ry = cy + i * line_h;
-            if (point_in_rect(m.x, m.y, cx, ry, card_w, card_h)) new_hover_card = i;
-            if (point_in_rect(m.x, m.y, x_minus, ry + 15, minus_w, 38)) new_hover_minus = i;
-            if (point_in_rect(m.x, m.y, x_plus, ry + 15, plus_w, 38)) new_hover_plus = i;
+            if (point_in_ui_rect(m.x, m.y, &card_rects[i])) new_hover_card = i;
+            if (point_in_ui_rect(m.x, m.y, &minus_rects[i])) new_hover_minus = i;
+            if (point_in_ui_rect(m.x, m.y, &plus_rects[i])) new_hover_plus = i;
         }
-        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) new_hover_finish = 1;
+        if (point_in_ui_rect(m.x, m.y, &finish_rect)) new_hover_finish = 1;
         if (new_hover_card != hover_card || new_hover_minus != hover_minus || new_hover_plus != hover_plus || new_hover_finish != hover_finish) {
             hover_card = new_hover_card;
             hover_minus = new_hover_minus;
@@ -1996,21 +2004,17 @@ multi_card_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                int x_minus = cx + card_w + UI_GAP;
-                int x_qty = x_minus + minus_w + UI_GAP;
-                int x_plus = x_qty + qty_w + UI_GAP;
-                int ry = cy + i * line_h;
-                if (point_in_rect(m.x, m.y, x_minus, ry + 15, minus_w, 38)) {
+                if (point_in_ui_rect(m.x, m.y, &minus_rects[i])) {
                     if (qty[i] > 0) { qty[i]--; total--; }
                     need_redraw = 1; handled = 1; break;
                 }
-                if (point_in_rect(m.x, m.y, x_plus, ry + 15, plus_w, 38)) {
+                if (point_in_ui_rect(m.x, m.y, &plus_rects[i])) {
                     if (total < max_select) { qty[i]++; total++; }
                     else draw_overlay_message_kind("Cannot exceed deck limit", UI_MSG_ERROR);
                     need_redraw = 1; handled = 1; break;
                 }
             }
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 150, 40)) {
+            if (!handled && point_in_ui_rect(m.x, m.y, &finish_rect)) {
                 // End Building: finalize selection and return negative count to signal engine to stop further rounds
                 int count = 0;
                 for (int i = 0; i < show && count < max_select; i++) {
