@@ -10,11 +10,82 @@
 #include <string>
 static int g_draw_y = 10;
 void print_character(const Character* ch);
+
+static IMAGE g_art_background;
+static IMAGE g_art_main_panel;
+static IMAGE g_art_status_panel;
+static IMAGE g_art_side_panel;
+static IMAGE g_art_records_panel;
+static IMAGE g_art_message_panel;
+static IMAGE g_art_button_idle;
+static IMAGE g_art_button_selected;
+static IMAGE g_art_button_disabled;
+static IMAGE g_art_hp_fill;
+static IMAGE g_art_energy_fill;
+static IMAGE g_art_bar_frame;
+static IMAGE g_art_card_plate;
+static IMAGE g_art_portrait_normal;
+static IMAGE g_art_portrait_water;
+static IMAGE g_art_portrait_fire;
+static IMAGE g_art_portrait_grass;
+static IMAGE g_art_portrait_electric;
+static int g_ui_assets_ready = 0;
+
+static void load_ui_assets() {
+    if (g_ui_assets_ready) return;
+    loadimage(&g_art_background, "assets\\ui\\battle_background.bmp", 800, 600, true);
+    loadimage(&g_art_main_panel, "assets\\ui\\main_panel.bmp", 452, 520, true);
+    loadimage(&g_art_status_panel, "assets\\ui\\status_panel.bmp", 800, 36, true);
+    loadimage(&g_art_side_panel, "assets\\ui\\side_panel.bmp", 294, 208, true);
+    loadimage(&g_art_records_panel, "assets\\ui\\records_panel.bmp", 285, 260, true);
+    loadimage(&g_art_message_panel, "assets\\ui\\message_panel.bmp", 760, 40, true);
+    loadimage(&g_art_button_idle, "assets\\ui\\button_idle.bmp", 420, 60, true);
+    loadimage(&g_art_button_selected, "assets\\ui\\button_selected.bmp", 420, 60, true);
+    loadimage(&g_art_button_disabled, "assets\\ui\\button_disabled.bmp", 420, 60, true);
+    loadimage(&g_art_hp_fill, "assets\\ui\\hp_bar_fill.bmp", 180, 10, true);
+    loadimage(&g_art_energy_fill, "assets\\ui\\energy_bar_fill.bmp", 180, 10, true);
+    loadimage(&g_art_bar_frame, "assets\\ui\\bar_frame.bmp", 184, 14, true);
+    loadimage(&g_art_card_plate, "assets\\ui\\card_plate.bmp", 420, 72, true);
+    loadimage(&g_art_portrait_normal, "assets\\ui\\portrait_normal.bmp", 32, 32, true);
+    loadimage(&g_art_portrait_water, "assets\\ui\\portrait_water.bmp", 32, 32, true);
+    loadimage(&g_art_portrait_fire, "assets\\ui\\portrait_fire.bmp", 32, 32, true);
+    loadimage(&g_art_portrait_grass, "assets\\ui\\portrait_grass.bmp", 32, 32, true);
+    loadimage(&g_art_portrait_electric, "assets\\ui\\portrait_electric.bmp", 32, 32, true);
+    g_ui_assets_ready = 1;
+}
+
+static void draw_art_or_fill(IMAGE* img, int x, int y, int w, int h, COLORREF fill) {
+    if (img && img->getwidth() > 0 && img->getheight() > 0) {
+        putimage(x, y, w, h, img, 0, 0);
+        return;
+    }
+    setfillcolor(fill);
+    fillrectangle(x, y, x + w, y + h);
+}
+
+static IMAGE* portrait_for_element(ElementType element) {
+    switch (element) {
+        case ELEMENT_WATER: return &g_art_portrait_water;
+        case ELEMENT_FIRE: return &g_art_portrait_fire;
+        case ELEMENT_GRASS: return &g_art_portrait_grass;
+        case ELEMENT_ELECTRIC: return &g_art_portrait_electric;
+        case ELEMENT_NORMAL:
+        default: return &g_art_portrait_normal;
+    }
+}
+
+static void draw_background_shell() {
+    load_ui_assets();
+    draw_art_or_fill(&g_art_background, 0, 0, 800, 600, RGB(37, 46, 54));
+    draw_art_or_fill(&g_art_main_panel, 8, 8, 452, 520, RGB(238, 231, 201));
+}
+
 static void reset_draw_y() {
     g_draw_y = 10;
-    setbkcolor(WHITE);
-    settextcolor(BLACK);
+    setbkcolor(RGB(238, 231, 201));
+    settextcolor(RGB(31, 37, 41));
     cleardevice();
+    draw_background_shell();
 }
 
 // Convert UTF-8 C string to current ANSI code page string
@@ -53,11 +124,10 @@ static void present_frame() {
 static void draw_status_bar(const GameState* st, int acting_player_id, const char* phase) {
     if (!st) return;
     char buf[256];
-    setfillcolor(RGB(238, 244, 252));
+    draw_art_or_fill(&g_art_status_panel, 0, 0, 800, 36, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
-    fillrectangle(0, 0, 800, 36);
     rectangle(0, 0, 799, 36);
-    settextcolor(BLACK);
+    settextcolor(RGB(26, 36, 45));
     snprintf(buf, sizeof(buf), "Round %d", st->round_count);
     outtextxy_utf8(16, 9, buf);
     snprintf(buf, sizeof(buf), "Acting Player: P%d", acting_player_id > 0 ? acting_player_id : st->current_turn);
@@ -120,28 +190,22 @@ static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
 }
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
-    // Draw filled button with visible text to avoid overlap artifacts
-    setfillcolor(WHITE);
-    setlinecolor(BLACK);
-    fillrectangle(x, y, x + w, y + h);
+    draw_art_or_fill(&g_art_button_idle, x, y, w, h, RGB(236, 230, 198));
+    setlinecolor(RGB(65, 56, 43));
     rectangle(x, y, x + w, y + h);
-    settextcolor(BLACK);
+    settextcolor(RGB(29, 31, 30));
     outtextxy_utf8(x + 6, y + 6, label);
     present_frame();
 }
 
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
-    // Draw normal button background
-    setfillcolor(WHITE);
-    setlinecolor(BLACK);
-    fillrectangle(x, y, x + w, y + h);
+    draw_art_or_fill(&g_art_button_selected, x, y, w, h, RGB(200, 234, 214));
+    setlinecolor(RGB(45, 90, 73));
     rectangle(x, y, x + w, y + h);
-    // Draw a small left marker (green) so the text is not occluded and no flicker
-    setfillcolor(GREEN);
+    setfillcolor(RGB(52, 150, 99));
     fillrectangle(x + 6, y + 6, x + 22, y + h - 6);
-    // Draw label shifted right to avoid marker
-    settextcolor(BLACK);
+    settextcolor(RGB(20, 42, 34));
     outtextxy_utf8(x + 30, y + 6, label);
     present_frame();
 }
@@ -151,13 +215,52 @@ static void draw_button_with_check(int x, int y, int w, int h, const char* label
 static void draw_overlay_message(const char* utf8msg) {
     std::string s = utf8_to_acp_str(utf8msg);
     int x = 20, w = 760, h = 40, y = 540; // bottom area for messages
-    setfillcolor(WHITE);
-    setlinecolor(BLACK);
-    fillrectangle(x, y, x + w, y + h);
+    draw_art_or_fill(&g_art_message_panel, x, y, w, h, RGB(246, 242, 222));
+    setlinecolor(RGB(65, 56, 43));
     rectangle(x, y, x + w, y + h);
-    settextcolor(BLACK);
+    settextcolor(RGB(29, 31, 30));
     outtextxy(x + 6, y + 10, s.c_str());
     present_frame();
+}
+
+static int clamp_meter_width(int value, int max_value, int width) {
+    if (max_value <= 0 || value <= 0) return 0;
+    if (value >= max_value) return width;
+    return (value * width) / max_value;
+}
+
+static void draw_meter(int x, int y, int w, int value, int max_value, IMAGE* fill_img) {
+    int inner_w = w - 4;
+    int fill_w = clamp_meter_width(value, max_value, inner_w);
+    draw_art_or_fill(&g_art_bar_frame, x, y, w, 14, RGB(35, 42, 48));
+    if (fill_w > 0 && fill_img && fill_img->getwidth() > 0) {
+        putimage(x + 2, y + 2, fill_w, 10, fill_img, 0, 0);
+    } else if (fill_w > 0) {
+        setfillcolor(RGB(203, 54, 49));
+        fillrectangle(x + 2, y + 2, x + 2 + fill_w, y + 12);
+    }
+    setlinecolor(RGB(68, 55, 35));
+    rectangle(x, y, x + w, y + 14);
+}
+
+static void draw_character_hud_row(const Character* ch, int x, int y, const char* prefix) {
+    if (!ch) return;
+    char buf[128];
+    IMAGE* portrait = portrait_for_element(ch->element);
+    draw_art_or_fill(portrait, x, y, 32, 32, RGB(167, 158, 139));
+    setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
+    rectangle(x, y, x + 32, y + 32);
+    if (!ch->is_alive) {
+        setlinecolor(RGB(130, 30, 30));
+        line(x + 3, y + 3, x + 29, y + 29);
+        line(x + 29, y + 3, x + 3, y + 29);
+    }
+    settextcolor(RGB(27, 33, 35));
+    snprintf(buf, sizeof(buf), "%s %s", prefix, ch->name);
+    outtextxy_utf8(x + 40, y, buf);
+    snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
+    outtextxy_utf8(x + 40, y + 17, buf);
+    draw_meter(x + 134, y + 17, 128, ch->hp, ch->max_hp, &g_art_hp_fill);
 }
 
 // Render both teams' characters and HP on a side panel (right side) so that
@@ -166,35 +269,34 @@ static void draw_team_hp_panel(const GameState* st) {
     if (!st) return;
     int x = 480, y = 48; // shifted left slightly to avoid overflow and status bar
     char buf[128];
-    setfillcolor(WHITE);
-    setlinecolor(BLACK);
-    // background for panel (slightly extended to the right)
-    fillrectangle(x - 8, y - 4, 765, 220);
-    rectangle(x - 8, y - 4, 765, 220);
-    settextcolor(BLACK);
+    draw_art_or_fill(&g_art_side_panel, x - 8, y - 4, 294, 208, RGB(242, 239, 220));
+    setlinecolor(RGB(62, 76, 92));
+    rectangle(x - 8, y - 4, x - 8 + 294, y - 4 + 208);
+    settextcolor(RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
     outtextxy_utf8(x + 6, y, buf); y += 22;
     for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), " P1[%d] %s  HP:%d/%d", i, st->p1.team[i].name, st->p1.team[i].hp, st->p1.team[i].max_hp);
-        outtextxy_utf8(x + 6, y, buf); y += 22;
+        snprintf(buf, sizeof(buf), "P1[%d]", i);
+        draw_character_hud_row(&st->p1.team[i], x + 6, y, buf);
+        y += 32;
     }
     y += 6;
     snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
     outtextxy_utf8(x + 6, y, buf); y += 22;
     for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), " P2[%d] %s  HP:%d/%d", i, st->p2.team[i].name, st->p2.team[i].hp, st->p2.team[i].max_hp);
-        outtextxy_utf8(x + 6, y, buf); y += 22;
+        snprintf(buf, sizeof(buf), "P2[%d]", i);
+        draw_character_hud_row(&st->p2.team[i], x + 6, y, buf);
+        y += 32;
     }
 }
 
 static void draw_button_disabled(int x, int y, int w, int h, const char* label) {
-    setfillcolor(RGB(225, 225, 225));
-    setlinecolor(RGB(150, 150, 150));
-    fillrectangle(x, y, x + w, y + h);
+    draw_art_or_fill(&g_art_button_disabled, x, y, w, h, RGB(204, 207, 203));
+    setlinecolor(RGB(116, 124, 124));
     rectangle(x, y, x + w, y + h);
-    settextcolor(RGB(120, 120, 120));
+    settextcolor(RGB(95, 98, 98));
     outtextxy_utf8(x + 6, y + 6, label);
-    settextcolor(BLACK);
+    settextcolor(RGB(31, 37, 41));
     present_frame();
 }
 
@@ -206,11 +308,10 @@ static void draw_action_records_panel(const ActionRecord* records, int record_co
     int x = 480, y = 260, w = 285, h = 260;
     char buf[256];
     int shown = 0;
-    setfillcolor(WHITE);
-    setlinecolor(BLACK);
-    fillrectangle(x, y, x + w, y + h);
+    draw_art_or_fill(&g_art_records_panel, x, y, w, h, RGB(230, 234, 230));
+    setlinecolor(RGB(62, 76, 92));
     rectangle(x, y, x + w, y + h);
-    settextcolor(BLACK);
+    settextcolor(RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "P%d Card Records", player_id);
     outtextxy_utf8(x + 8, y + 8, buf);
     int line_y = y + 36;
@@ -252,6 +353,7 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
     draw_line(buf);
     snprintf(buf, sizeof(buf), "Energy: %d/%d", p->energy, p->max_energy);
     draw_line(buf);
+    draw_meter(118, g_draw_y - 22, 184, p->energy, p->max_energy, &g_art_energy_fill);
     draw_line("Active:");
     print_character(&p->team[p->active_idx]);
     present_frame();
@@ -268,10 +370,13 @@ void InitGUI() {
 #ifdef USE_EASYX
     initgraph(800,600);
     BeginBatchDraw();
-    setbkcolor(WHITE);
-    settextcolor(BLACK);
+    load_ui_assets();
+    setbkcolor(RGB(238, 231, 201));
+    settextcolor(RGB(31, 37, 41));
+    setbkmode(TRANSPARENT);
     cleardevice();
     settextstyle_utf8(20,0,"SimSun");
+    draw_background_shell();
     outtextxy_utf8(20, 20, "Spire of Roco loading...");
     present_frame();
 #else
@@ -292,10 +397,18 @@ void print_character(const Character* ch) {
     if (!ch) return;
 #ifdef USE_EASYX
     char buf[256];
+    int y = g_draw_y;
+    IMAGE* portrait = portrait_for_element(ch->element);
+    draw_art_or_fill(portrait, 10, y, 32, 32, RGB(167, 158, 139));
+    setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
+    rectangle(10, y, 42, y + 32);
     snprintf(buf, sizeof(buf), "%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s",
              ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
              ch->is_alive ? "" : "[DEAD]");
-    draw_line(buf);
+    settextcolor(RGB(27, 33, 35));
+    outtextxy_utf8(50, y + 1, buf);
+    draw_meter(50, y + 22, 184, ch->hp, ch->max_hp, &g_art_hp_fill);
+    g_draw_y += 40;
 #else
     printf("%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s\n",
            ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
@@ -307,9 +420,15 @@ void print_card(const Card* c, int idx) {
     if (!c) return;
 #ifdef USE_EASYX
     char buf[256];
+    int y = g_draw_y;
+    draw_art_or_fill(&g_art_card_plate, 10, y, 420, 34, RGB(222, 215, 184));
+    setlinecolor(RGB(83, 72, 55));
+    rectangle(10, y, 430, y + 34);
     snprintf(buf, sizeof(buf), " [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d",
              idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
-    draw_line(buf);
+    settextcolor(RGB(29, 31, 30));
+    outtextxy_utf8(18, y + 7, buf);
+    g_draw_y += 38;
 #else
     printf(" [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d\n",
            idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
@@ -320,6 +439,7 @@ void RenderGameBoard(GameState state) {
 #ifdef USE_EASYX
     reset_draw_y();
     draw_status_bar(&state, state.current_turn, "Board");
+    draw_team_hp_panel(&state);
     char buf[256];
     snprintf(buf,sizeof(buf), "=== Game Board (Round:%d) Current Turn: Player %d ===", state.round_count, state.current_turn);
     draw_line(buf);
@@ -327,6 +447,7 @@ void RenderGameBoard(GameState state) {
     snprintf(buf,sizeof(buf), "-- Player1: %s --", state.p1.name); draw_line(buf);
     draw_line(" Active: "); print_character(&state.p1.team[state.p1.active_idx]);
     snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count); draw_line(buf);
+    draw_meter(118, g_draw_y - 22, 184, state.p1.energy, state.p1.max_energy, &g_art_energy_fill);
     if (state.p1.hand_count > 0) {
         draw_line(" Hand:");
         for (int i = 0; i < state.p1.hand_count; i++) {
@@ -337,6 +458,7 @@ void RenderGameBoard(GameState state) {
     snprintf(buf,sizeof(buf), "\n-- Player2: %s --", state.p2.name); draw_line(buf);
     draw_line(" Active: "); print_character(&state.p2.team[state.p2.active_idx]);
     snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count); draw_line(buf);
+    draw_meter(118, g_draw_y - 22, 184, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
     if (state.p2.hand_count > 0) {
         draw_line(" Hand:");
         for (int i = 0; i < state.p2.hand_count; i++) {
