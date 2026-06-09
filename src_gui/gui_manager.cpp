@@ -41,6 +41,7 @@ static int g_ui_w = 1280;
 static int g_ui_h = 720;
 static int g_ui_margin = 24;
 static int g_status_h = 44;
+static int g_left_side_x = 24;
 static int g_main_x = 24;
 static int g_main_y = 60;
 static int g_main_w = 820;
@@ -79,21 +80,29 @@ static void update_layout() {
 
     g_ui_w = w;
     g_ui_h = h;
-    g_ui_margin = clamp_int(w / 70, 18, 32);
+    g_ui_margin = clamp_int(w / 82, 14, 28);
     g_status_h = clamp_int(h / 22, 40, 52);
-    g_main_x = g_ui_margin;
+    g_left_side_x = g_ui_margin;
     g_main_y = g_status_h + g_ui_margin;
-    g_side_w = clamp_int(w / 4, 340, 460);
+    g_side_w = clamp_int(w / 5, 220, 330);
+    int center_gap = clamp_int(w / 96, 10, 22);
+    g_main_x = g_left_side_x + g_side_w + center_gap;
     g_side_x = w - g_side_w - g_ui_margin;
-    g_main_w = g_side_x - g_main_x - g_ui_margin;
-    if (g_main_w < 520) g_main_w = w - (g_ui_margin * 2);
-    g_main_h = h - g_main_y - 86;
-    if (g_main_h < 420) g_main_h = h - g_main_y - 58;
+    g_main_w = g_side_x - g_main_x - center_gap;
+    if (g_main_w < 360) {
+        g_side_w = clamp_int((w - (g_ui_margin * 2) - 360 - (center_gap * 2)) / 2, 180, 220);
+        g_main_x = g_left_side_x + g_side_w + center_gap;
+        g_side_x = w - g_side_w - g_ui_margin;
+        g_main_w = g_side_x - g_main_x - center_gap;
+    }
+    if (g_main_w < 300) g_main_w = 300;
+    int message_top = h - g_ui_margin - 70;
+    g_main_h = message_top - g_main_y - g_ui_margin;
+    if (g_main_h < 360) g_main_h = h - g_main_y - 58;
     g_team_panel_y = g_main_y;
-    g_team_panel_h = 304;
+    g_team_panel_h = clamp_int(message_top - g_team_panel_y - g_ui_margin, 248, 360);
     g_records_panel_y = g_team_panel_y + g_team_panel_h + g_ui_margin;
-    g_records_panel_h = h - g_records_panel_y - 86;
-    if (g_records_panel_h < 220) g_records_panel_h = 220;
+    g_records_panel_h = clamp_int(message_top - g_records_panel_y, 120, 220);
 }
 
 static int bottom_button_y() {
@@ -220,6 +229,8 @@ static void draw_background_shell() {
     update_layout();
     draw_art_or_fill(&g_art_background, 0, 0, g_ui_w, g_ui_h, RGB(37, 46, 54));
     draw_art_or_fill(&g_art_main_panel, g_main_x, g_main_y, g_main_w, g_main_h, RGB(238, 231, 201));
+    setlinecolor(RGB(88, 105, 119));
+    rectangle(g_main_x, g_main_y, g_main_x + g_main_w, g_main_y + g_main_h);
 }
 
 static void reset_draw_y() {
@@ -267,7 +278,10 @@ static void settextstyle_utf8(int height, int width, const char* utf8Name) {
     std::string s = utf8_to_acp_str(utf8Name);
     settextstyle(height, width, s.c_str());
 }
-static void draw_line(const char* s) { outtextxy_utf8(g_main_x + 16, g_draw_y, s); g_draw_y += 26; }
+static void draw_line(const char* s) {
+    outtextxy_clipped_utf8(g_main_x + 16, g_draw_y, g_main_w - 32, s);
+    g_draw_y += 26;
+}
 #ifdef USE_EASYX
 static void draw_overlay_message(const char* utf8msg);
 
@@ -360,7 +374,7 @@ static COLORREF hp_state_color(int hp, int max_hp) {
 static void draw_section_title(int x, int y, const char* title) {
     settextstyle_utf8(22, 0, "SimSun");
     settextcolor(RGB(28, 36, 42));
-    outtextxy_utf8(x, y, title);
+    outtextxy_clipped_utf8(x, y, g_ui_w - x - g_ui_margin, title);
     settextstyle_utf8(20, 0, "SimSun");
 }
 
@@ -389,30 +403,38 @@ static void draw_status_bar(const GameState* st, int acting_player_id, const cha
     if (!st) return;
     update_layout();
     char buf[256];
+    int hotkey_w = clamp_int(g_ui_w / 5, 170, 240);
+    int hotkey_x = g_ui_w - g_ui_margin - hotkey_w;
+    int round_w = 130;
+    int acting_w = clamp_int((hotkey_x - g_ui_margin - round_w) / 2, 140, 230);
+    int phase_x = g_ui_margin + round_w + acting_w;
+    int phase_w = hotkey_x - phase_x - 8;
     draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
     rectangle(0, 0, g_ui_w - 1, g_status_h);
     settextcolor(RGB(26, 36, 45));
     snprintf(buf, sizeof(buf), "Round %d", st->round_count);
-    outtextxy_utf8(g_ui_margin, 12, buf);
+    outtextxy_clipped_utf8(g_ui_margin, 12, round_w - 8, buf);
     snprintf(buf, sizeof(buf), "Acting Player: P%d", acting_player_id > 0 ? acting_player_id : st->current_turn);
-    outtextxy_utf8(g_ui_margin + 150, 12, buf);
+    outtextxy_clipped_utf8(g_ui_margin + round_w, 12, acting_w - 8, buf);
     if (phase && phase[0] != '\0') {
         snprintf(buf, sizeof(buf), "Phase: %s", phase);
-        outtextxy_utf8(g_ui_margin + 350, 12, buf);
+        outtextxy_clipped_utf8(phase_x, 12, phase_w, buf);
     }
-    outtextxy_utf8(g_ui_w - 250, 12, "Esc: Quit  F11: Toggle");
+    outtextxy_clipped_utf8(hotkey_x, 12, hotkey_w, "Esc: Quit  F11: Toggle");
     g_draw_y = g_main_y + 14;
 }
 
 static void draw_simple_status_bar(const char* title) {
     update_layout();
+    int hotkey_w = clamp_int(g_ui_w / 5, 170, 240);
+    int hotkey_x = g_ui_w - g_ui_margin - hotkey_w;
     draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
     rectangle(0, 0, g_ui_w - 1, g_status_h);
     settextcolor(RGB(26, 36, 45));
-    outtextxy_utf8(g_ui_margin, 12, title ? title : "Spire of Roco");
-    outtextxy_utf8(g_ui_w - 250, 12, "Esc: Quit  F11: Toggle");
+    outtextxy_clipped_utf8(g_ui_margin, 12, hotkey_x - g_ui_margin - 8, title ? title : "Spire of Roco");
+    outtextxy_clipped_utf8(hotkey_x, 12, hotkey_w, "Esc: Quit  F11: Toggle");
     g_draw_y = g_main_y + 14;
 }
 
@@ -595,64 +617,109 @@ static void draw_meter_colored(int x, int y, int w, int value, int max_value, CO
     rectangle(x, y, x + w, y + 14);
 }
 
-static void draw_character_hud_row(const Character* ch, int x, int y, int w, const char* prefix, int active, int hover) {
-    if (!ch) return;
-    char buf[128];
-    COLORREF row_fill = ch->is_alive ? (active ? RGB(236, 244, 229) : RGB(235, 232, 213)) : RGB(205, 205, 198);
-    COLORREF row_border = active ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(135, 122, 96));
-    draw_soft_panel(x, y, w, 42, row_fill, row_border);
-    if (active) {
-        setfillcolor(RGB(52, 150, 99));
-        fillrectangle(x, y, x + 5, y + 42);
-    }
-    IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, x + 8, y + 5, 32, 32, RGB(167, 158, 139));
-    setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
-    rectangle(x + 8, y + 5, x + 40, y + 37);
-    if (!ch->is_alive) {
-        setlinecolor(RGB(130, 30, 30));
-        line(x + 11, y + 8, x + 37, y + 34);
-        line(x + 37, y + 8, x + 11, y + 34);
-    }
-    settextcolor(RGB(27, 33, 35));
-    snprintf(buf, sizeof(buf), "%s %s", prefix, ch->name);
-    outtextxy_clipped_utf8(x + 48, y + 4, w - 58, buf);
-    snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
-    outtextxy_utf8(x + 48, y + 22, buf);
-    draw_meter_colored(x + 118, y + 24, w - 128, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+static int team_slot_h() {
+    int header_h = 76;
+    int available = g_team_panel_h - header_h - (UI_PAD * 2) - ((TEAM_SIZE - 1) * UI_GAP);
+    return clamp_int(available / TEAM_SIZE, 54, 74);
 }
 
-// Render both teams' characters and HP on a side panel (right side) so that
-// their HP is always visible during the turn.
-static void draw_team_hp_panel(const GameState* st) {
+static int team_panel_x_for_player(int player_id) {
+    return (player_id == 1) ? g_left_side_x : g_side_x;
+}
+
+static void get_team_slot_rect(int player_id, int slot, UiRect* rect) {
     update_layout();
-    int x = g_side_x + 10, y = g_team_panel_y + 10;
+    int slot_h = team_slot_h();
+    int panel_x = team_panel_x_for_player(player_id);
+    int x = panel_x + UI_PAD;
+    int y = g_team_panel_y + UI_PAD + 76 + slot * (slot_h + UI_GAP);
+    set_ui_rect(rect, x, y, g_side_w - (UI_PAD * 2), slot_h);
+}
+
+static void draw_character_slot(const Character* ch, int slot_idx, int x, int y, int w, int h,
+                                int active, int hover, int disabled, int mirror) {
+    if (!ch) return;
+    char buf[160];
+    int alive = ch->is_alive && !disabled;
+    COLORREF row_fill = alive ? (active ? RGB(236, 244, 229) : RGB(235, 232, 213)) : RGB(205, 205, 198);
+    COLORREF row_border = active ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(135, 122, 96));
+    int stripe_x1 = mirror ? x + w - 6 : x;
+    int stripe_x2 = mirror ? x + w : x + 6;
+    int portrait_x = mirror ? x + w - 44 : x + 10;
+    int text_x = mirror ? x + 12 : x + 52;
+    int text_w = w - 64;
+    int meter_x = text_x;
+    int meter_w = text_w;
+    draw_soft_panel(x, y, w, h, row_fill, row_border);
+    if (active) {
+        setfillcolor(RGB(52, 150, 99));
+        fillrectangle(stripe_x1, y, stripe_x2, y + h);
+    }
+    IMAGE* portrait = portrait_for_element(ch->element);
+    draw_art_or_fill(portrait, portrait_x, y + 9, 34, 34, RGB(167, 158, 139));
+    setlinecolor(alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
+    rectangle(portrait_x, y + 9, portrait_x + 34, y + 43);
+    if (!alive) {
+        setlinecolor(RGB(130, 30, 30));
+        line(portrait_x + 3, y + 12, portrait_x + 31, y + 40);
+        line(portrait_x + 31, y + 12, portrait_x + 3, y + 40);
+    }
+    settextstyle_utf8(h < 62 ? 17 : 18, 0, "SimSun");
+    settextcolor(alive ? RGB(27, 33, 35) : RGB(92, 92, 88));
+    snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
+    outtextxy_clipped_utf8(text_x, y + 6, text_w, buf);
+    settextstyle_utf8(16, 0, "SimSun");
+    settextcolor(alive ? RGB(74, 67, 55) : RGB(104, 104, 100));
+    snprintf(buf, sizeof(buf), "HP %d/%d  %s  %s", ch->hp, ch->max_hp, element_label(ch->element),
+             ch->is_alive ? (active ? "Active" : "Ready") : "Defeated");
+    outtextxy_clipped_utf8(text_x, y + 27, text_w, buf);
+    draw_meter_colored(meter_x, y + h - 18, meter_w, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    settextstyle_utf8(20, 0, "SimSun");
+}
+
+static void draw_player_team_panel(const Player* player, int player_id, int panel_x, const char* fallback_title,
+                                   COLORREF accent, int hover_slot, int mirror) {
+    update_layout();
     char buf[128];
-    draw_art_or_fill(&g_art_side_panel, g_side_x, g_team_panel_y, g_side_w, g_team_panel_h, RGB(242, 239, 220));
+    int x = panel_x + UI_PAD;
+    int y = g_team_panel_y + UI_PAD;
+    draw_art_or_fill(&g_art_side_panel, panel_x, g_team_panel_y, g_side_w, g_team_panel_h, RGB(242, 239, 220));
     setlinecolor(RGB(62, 76, 92));
-    rectangle(g_side_x, g_team_panel_y, g_side_x + g_side_w, g_team_panel_y + g_team_panel_h);
-    if (!st) {
-        draw_section_title(x + 6, y, "Team HUD");
+    rectangle(panel_x, g_team_panel_y, panel_x + g_side_w, g_team_panel_y + g_team_panel_h);
+    setfillcolor(accent);
+    fillrectangle(mirror ? panel_x + g_side_w - 8 : panel_x, g_team_panel_y, mirror ? panel_x + g_side_w : panel_x + 8, g_team_panel_y + g_team_panel_h);
+    if (!player) {
+        draw_section_title(x, y, fallback_title);
         settextcolor(RGB(93, 89, 79));
-        outtextxy_utf8(x + 6, y + 36, "Team status appears here.");
+        outtextxy_clipped_utf8(x, y + 36, g_side_w - (UI_PAD * 2), "Team status appears here.");
         return;
     }
     settextcolor(RGB(27, 33, 35));
-    snprintf(buf, sizeof(buf), "Player 1  %s", st->p1.name);
-    draw_section_title(x + 6, y, buf); y += 30;
+    snprintf(buf, sizeof(buf), "Player %d  %s", player_id, player->name);
+    draw_section_title(x, y, buf);
+    y += 30;
+    snprintf(buf, sizeof(buf), "Energy %d/%d  Hand %d", player->energy, player->max_energy, player->hand_count);
+    outtextxy_clipped_utf8(x, y, g_side_w - (UI_PAD * 2), buf);
+    draw_meter_colored(x, y + 24, g_side_w - (UI_PAD * 2), player->energy, player->max_energy, RGB(68, 145, 206));
     for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), "%d", i + 1);
-        draw_character_hud_row(&st->p1.team[i], x + 6, y, g_side_w - 32, buf, i == st->p1.active_idx, 0);
-        y += 46;
+        UiRect rect;
+        get_team_slot_rect(player_id, i, &rect);
+        draw_character_slot(&player->team[i], i, rect.x, rect.y, rect.w, rect.h,
+                            i == player->active_idx, hover_slot == i, !player->team[i].is_alive, mirror);
     }
-    y += 8;
-    snprintf(buf, sizeof(buf), "Player 2  %s", st->p2.name);
-    draw_section_title(x + 6, y, buf); y += 30;
-    for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), "%d", i + 1);
-        draw_character_hud_row(&st->p2.team[i], x + 6, y, g_side_w - 32, buf, i == st->p2.active_idx, 0);
-        y += 46;
+}
+
+// Render each player's team on its own side of the battlefield.
+static void draw_team_hp_panel(const GameState* st, int hover_player_id = 0, int hover_slot = -1) {
+    if (!st) {
+        draw_player_team_panel(NULL, 1, g_left_side_x, "Player 1 Team", RGB(73, 126, 180), -1, 0);
+        draw_player_team_panel(NULL, 2, g_side_x, "Player 2 Team", RGB(176, 93, 77), -1, 1);
+        return;
     }
+    draw_player_team_panel(&st->p1, 1, g_left_side_x, "Player 1 Team", RGB(73, 126, 180),
+                           hover_player_id == 1 ? hover_slot : -1, 0);
+    draw_player_team_panel(&st->p2, 2, g_side_x, "Player 2 Team", RGB(176, 93, 77),
+                           hover_player_id == 2 ? hover_slot : -1, 1);
 }
 
 static void build_card_stats_text(const Card* c, char* out, size_t out_size) {
@@ -757,7 +824,7 @@ static int compute_planned_card_rects(int card_count, int start_y, int footer_y,
         card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
         card_h = clamp_int(card_h, 58, UI_CARD_H);
     }
-    int card_w = (columns == 2) ? ((available_w - UI_GAP) / 2) : clamp_int(available_w, 380, 680);
+    int card_w = (columns == 2) ? ((available_w - UI_GAP) / 2) : clamp_int(available_w, 280, 680);
     int origin_x = g_main_x + 24;
     for (int i = 0; i < card_count; i++) {
         int col = i % columns;
@@ -770,13 +837,38 @@ static int compute_planned_card_rects(int card_count, int start_y, int footer_y,
     return columns;
 }
 
+static int visible_card_rows_for_current_layout() {
+    int start_y = g_main_y + 112;
+    int available_h = bottom_button_y() - start_y - UI_GAP;
+    return clamp_int(available_h / (UI_CARD_H + UI_GAP), 3, 8);
+}
+
+static void draw_center_battlefield_frame(const char* title, UiRect* out_rect) {
+    int x = g_main_x + UI_PAD;
+    int y = g_main_y + UI_PAD;
+    int w = g_main_w - (UI_PAD * 2);
+    int h = clamp_int(g_main_h / 2, 190, 300);
+    set_ui_rect(out_rect, x, y, w, h);
+    draw_soft_panel(x, y, w, h, RGB(231, 237, 224), RGB(93, 112, 92));
+    setlinecolor(RGB(141, 156, 126));
+    line(x + w / 2, y + 18, x + w / 2, y + h - 18);
+    setlinecolor(RGB(176, 187, 160));
+    rectangle(x + 12, y + 34, x + (w / 2) - 12, y + h - 18);
+    rectangle(x + (w / 2) + 12, y + 34, x + w - 12, y + h - 18);
+    settextcolor(RGB(74, 86, 70));
+    outtextxy_clipped_utf8(x + 14, y + 10, w - 28, title ? title : "Battlefield");
+}
+
 static Player* mutable_player(GameState* st, int player_id) {
     return (player_id == st->p1.player_id) ? &st->p1 : &st->p2;
 }
 
 static void draw_action_records_panel(const ActionRecord* records, int record_count, int player_id) {
     update_layout();
-    int x = g_side_x, y = g_records_panel_y, w = g_side_w, h = g_records_panel_h;
+    int w = clamp_int(g_main_w / 3, 220, 360);
+    int h = clamp_int(g_main_h / 4, 112, 170);
+    int x = g_main_x + g_main_w - w - UI_PAD;
+    int y = g_main_y + UI_PAD;
     char buf[256];
     int shown = 0;
     draw_art_or_fill(&g_art_records_panel, x, y, w, h, RGB(230, 234, 230));
@@ -784,17 +876,18 @@ static void draw_action_records_panel(const ActionRecord* records, int record_co
     rectangle(x, y, x + w, y + h);
     settextcolor(RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "P%d Card Records", player_id);
-    outtextxy_utf8(x + 8, y + 8, buf);
+    outtextxy_clipped_utf8(x + 8, y + 8, w - 16, buf);
     int line_y = y + 36;
-    for (int i = 0; i < record_count && shown < 10; i++) {
+    int max_lines = (h - 44) / 22;
+    for (int i = 0; i < record_count && shown < max_lines; i++) {
         if (records[i].action.type != ACTION_PLAY_CARD) continue;
         snprintf(buf, sizeof(buf), "%02d. %s", shown + 1, records[i].summary);
-        outtextxy_utf8(x + 8, line_y, buf);
+        outtextxy_clipped_utf8(x + 8, line_y, w - 16, buf);
         line_y += 22;
         shown++;
     }
     if (shown == 0) {
-        outtextxy_utf8(x + 8, y + 36, "No card records");
+        outtextxy_clipped_utf8(x + 8, y + 36, w - 16, "No card records");
     }
 }
 
@@ -818,6 +911,8 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
     draw_status_bar(st, player_id, "Planning");
     draw_team_hp_panel(st);
     draw_action_records_panel(records, record_count, player_id);
+    int record_h = clamp_int(g_main_h / 4, 112, 170);
+    g_draw_y = g_main_y + UI_PAD + record_h + UI_GAP;
     Player* p = mutable_player(st, player_id);
     char buf[256];
     snprintf(buf, sizeof(buf), "%s", title);
@@ -843,19 +938,20 @@ static void draw_battle_plan_screen(GameState* st, int player_id, const ActionRe
 }
 
 static void draw_target_select_screen(GameState* st, int player_id, const ActionRecord* records, int record_count,
-                                      const Card* card, const Character* target_team, int hover_target) {
+                                      const Card* card, int target_player_id, UiRect* target_rects, int hover_target) {
     char buf[256];
     begin_deferred_present();
     draw_planning_shell(st, player_id, records, record_count, "Choose a target");
+    draw_team_hp_panel(st, target_player_id, hover_target);
     snprintf(buf, sizeof(buf), "Card: %s", card ? card->name : "");
-    draw_line(buf);
-    int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 58;
+    draw_soft_panel(g_main_x + UI_PAD, g_draw_y + 4, g_main_w - (UI_PAD * 2), 46, RGB(238, 232, 204), RGB(85, 74, 56));
+    settextcolor(RGB(27, 33, 35));
+    outtextxy_clipped_utf8(g_main_x + UI_PAD + 12, g_draw_y + 17, g_main_w - (UI_PAD * 2) - 24, buf);
     for (int t = 0; t < TEAM_SIZE; t++) {
-        int disabled = target_team && !target_team[t].is_alive && card && card->target_type != TARGET_SELF_SINGLE;
-        draw_character_option_panel(&target_team[t], t, tx, ty + t * (th + UI_GAP), tw, th, hover_target == t, hover_target == t, disabled);
+        get_team_slot_rect(target_player_id, t, target_rects ? &target_rects[t] : NULL);
     }
     draw_button_state(g_main_x + 16, bottom_button_y(), 120, 38, "Back", 0, hover_target == 10, 0);
-    draw_overlay_message_kind("Select a highlighted target or go back.", UI_MSG_HINT);
+    draw_overlay_message_kind("Select a target from the highlighted side panel.", UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -876,7 +972,9 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     draw_line(buf);
     int cx = g_main_x + 24;
     int cy = g_draw_y + 8;
-    int card_w = qty ? clamp_int(g_main_w - 260, 360, 620) : clamp_int(g_main_w - 64, 360, 680);
+    int available_w = g_main_w - 48;
+    int controls_w = 42 + UI_GAP + 58 + UI_GAP + 42;
+    int card_w = qty ? clamp_int(available_w - controls_w - UI_GAP, 260, 620) : clamp_int(available_w, 280, 680);
     int ch = UI_CARD_H;
     for (int i = 0; i < show; i++) {
         int y = cy + i * (ch + UI_GAP);
@@ -996,29 +1094,42 @@ static void draw_battle_screen(GameState state) {
     draw_status_bar(&state, state.current_turn, "Board");
     draw_team_hp_panel(&state);
     char buf[256];
-    snprintf(buf,sizeof(buf), "Game Board - Round %d", state.round_count);
-    draw_section_title(g_main_x + 16, g_draw_y, buf);
-    g_draw_y += 32;
+    UiRect battlefield = {};
+    snprintf(buf, sizeof(buf), "Battlefield - Round %d", state.round_count);
+    draw_center_battlefield_frame(buf, &battlefield);
 
-    snprintf(buf,sizeof(buf), "Player 1: %s", state.p1.name); draw_line(buf);
-    draw_line("Active");
-    print_character(&state.p1.team[state.p1.active_idx]);
-    snprintf(buf,sizeof(buf), "Energy: %d/%d  Hand:%d  Draw:%d  Discard:%d", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count); draw_line(buf);
-    draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p1.energy, state.p1.max_energy, &g_art_energy_fill);
-    if (state.p1.hand_count > 0) {
-        draw_line("Hand");
-        for (int i = 0; i < state.p1.hand_count && g_draw_y + UI_CARD_H < bottom_button_y(); i++) {
-            print_card(&state.p1.hand[i], i);
+    Player* active_player = (state.current_turn == state.p2.player_id) ? &state.p2 : &state.p1;
+    int panel_x = g_main_x + UI_PAD;
+    int panel_y = battlefield.y + battlefield.h + UI_GAP;
+    int panel_w = g_main_w - (UI_PAD * 2);
+    int panel_h = 58;
+    draw_soft_panel(panel_x, panel_y, panel_w, panel_h, RGB(238, 232, 204), RGB(85, 74, 56));
+    snprintf(buf, sizeof(buf), "Current: Player %d  Energy %d/%d  Hand %d  Draw %d  Discard %d",
+             active_player->player_id, active_player->energy, active_player->max_energy,
+             active_player->hand_count, active_player->draw_count, active_player->discard_count);
+    settextcolor(RGB(27, 33, 35));
+    outtextxy_clipped_utf8(panel_x + 12, panel_y + 9, panel_w - 24, buf);
+    draw_meter(panel_x + 12, panel_y + 34, clamp_int(panel_w - 24, 160, 360),
+               active_player->energy, active_player->max_energy, &g_art_energy_fill);
+
+    g_draw_y = panel_y + panel_h + UI_GAP;
+    if (active_player->hand_count > 0) {
+        snprintf(buf, sizeof(buf), "Player %d Hand", active_player->player_id);
+        draw_section_title(g_main_x + UI_PAD, g_draw_y, buf);
+        g_draw_y += 28;
+        int footer_y = bottom_button_y() - 8;
+        int card_x[MAX_HAND_SIZE] = {0};
+        int card_y[MAX_HAND_SIZE] = {0};
+        int card_w[MAX_HAND_SIZE] = {0};
+        int card_h[MAX_HAND_SIZE] = {0};
+        compute_planned_card_rects(active_player->hand_count, g_draw_y, footer_y, card_x, card_y, card_w, card_h);
+        for (int i = 0; i < active_player->hand_count; i++) {
+            if (card_y[i] + card_h[i] > footer_y) break;
+            draw_card_panel(&active_player->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, 0,
+                            active_player->energy < active_player->hand[i].energy_cost, 0);
         }
-    }
-
-    if (g_draw_y + 172 < bottom_button_y()) {
-        g_draw_y += UI_GAP;
-        snprintf(buf,sizeof(buf), "Player 2: %s", state.p2.name); draw_line(buf);
-        draw_line("Active");
-        print_character(&state.p2.team[state.p2.active_idx]);
-        snprintf(buf,sizeof(buf), "Energy: %d/%d  Hand:%d  Draw:%d  Discard:%d", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count); draw_line(buf);
-        draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
+    } else {
+        draw_line("Hand empty");
     }
     draw_overlay_message_kind("Battle state refreshed.", UI_MSG_HINT);
     end_deferred_present();
@@ -1179,17 +1290,26 @@ action_menu:
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                                     // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
-                                    int tx = g_side_x + 24, ty = g_team_panel_y + g_team_panel_h + 24, tw = g_side_w - 48, th = 44;
+                                    UiRect target_rects[TEAM_SIZE] = {};
                                     Character* target_team = NULL;
-                                    if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
+                                    int target_player_id = player_id;
+                                    if (c->target_type == TARGET_SELF_SINGLE) {
+                                        target_team = p->team;
+                                        target_player_id = player_id;
+                                    }
                                     else {
                                         // 敌方队伍
-                                        if (player_id == state.p1.player_id) target_team = (Character*)state.p2.team;
-                                        else target_team = (Character*)state.p1.team;
+                                        if (player_id == state.p1.player_id) {
+                                            target_team = (Character*)state.p2.team;
+                                            target_player_id = state.p2.player_id;
+                                        } else {
+                                            target_team = (Character*)state.p1.team;
+                                            target_player_id = state.p1.player_id;
+                                        }
                                     }
+                                    draw_team_hp_panel(&state, target_player_id, -1);
                                     for (int t = 0; t < TEAM_SIZE; t++) {
-                                        char tb[128]; snprintf(tb, sizeof(tb), "Target %d: %s", t, target_team[t].name);
-                                        draw_button(tx, ty + t * (th + 8), tw, th, tb);
+                                        get_team_slot_rect(target_player_id, t, &target_rects[t]);
                                     }
                                     while (1) {
                                         if (!poll_mouse_message(&m)) {
@@ -1199,9 +1319,11 @@ action_menu:
                                         if (layout_changed_since(&layout_version)) goto action_menu;
                                         if (m.uMsg == WM_LBUTTONDOWN) {
                                             for (int t = 0; t < TEAM_SIZE; t++) {
-                                                int rx2 = tx;
-                                                int ry2 = ty + t * (th + 8);
-                                                if (point_in_rect(m.x, m.y, rx2, ry2, tw, th)) {
+                                                if (point_in_ui_rect(m.x, m.y, &target_rects[t])) {
+                                                    if (target_team && !target_team[t].is_alive && c->target_type != TARGET_SELF_SINGLE) {
+                                                        draw_overlay_message_kind("Target is defeated", UI_MSG_ERROR);
+                                                        break;
+                                                    }
                                                     act.target_idx = t;
                                                     return act;
                                                 }
@@ -1452,19 +1574,21 @@ target_select:
     {
         Card* c = &p->hand[act.card_hand_idx];
         Character* target_team = NULL;
+        int target_player_id = player_id;
         if (c->target_type == TARGET_SELF_SINGLE) {
             target_team = p->team;
+            target_player_id = player_id;
         } else {
             target_team = (player_id == state.p1.player_id) ? state.p2.team : state.p1.team;
+            target_player_id = (player_id == state.p1.player_id) ? state.p2.player_id : state.p1.player_id;
         }
-        int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 58;
+        UiRect target_rects[TEAM_SIZE] = {};
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         int hover_target = -1;
         int need_redraw = 1;
         while (1) {
             if (need_redraw) {
-                draw_target_select_screen(&state, player_id, records, record_count, c, target_team, hover_target);
-                tx = g_main_x + 48; ty = g_draw_y + 20; tw = clamp_int(g_main_w - 96, 360, 620); th = 58;
+                draw_target_select_screen(&state, player_id, records, record_count, c, target_player_id, target_rects, hover_target);
                 back_x = g_main_x + 16; back_y = bottom_button_y();
                 need_redraw = 0;
             }
@@ -1476,8 +1600,7 @@ target_select:
             int new_hover = -1;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover = 10;
             for (int t = 0; t < TEAM_SIZE; t++) {
-                int ry = ty + t * (th + UI_GAP);
-                if (point_in_rect(m.x, m.y, tx, ry, tw, th)) {
+                if (point_in_ui_rect(m.x, m.y, &target_rects[t])) {
                     new_hover = t;
                     break;
                 }
@@ -1492,8 +1615,7 @@ target_select:
                 goto main_menu;
             }
             for (int t = 0; t < TEAM_SIZE; t++) {
-                int ry = ty + t * (th + UI_GAP);
-                if (!point_in_rect(m.x, m.y, tx, ry, tw, th)) continue;
+                if (!point_in_ui_rect(m.x, m.y, &target_rects[t])) continue;
                 if (!target_team[t].is_alive && c->target_type != TARGET_SELF_SINGLE) {
                     draw_overlay_message_kind("Target is defeated", UI_MSG_ERROR);
                     break;
@@ -1508,7 +1630,7 @@ switch_select:
     p = mutable_player(&state, player_id);
     layout_version = g_ui_layout_version;
     {
-        int sx = g_main_x + 48, sy = g_draw_y + 20, sw = clamp_int(g_main_w - 96, 360, 620), sh = 58;
+        UiRect switch_rects[TEAM_SIZE] = {};
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         int hover_char = -1;
         int hover_back = 0;
@@ -1517,13 +1639,13 @@ switch_select:
             if (need_redraw) {
                 begin_deferred_present();
                 draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
-                sx = g_main_x + 48; sy = g_draw_y + 20; sw = clamp_int(g_main_w - 96, 360, 620); sh = 58;
+                draw_team_hp_panel(&state, player_id, hover_char);
                 back_x = g_main_x + 16; back_y = bottom_button_y();
                 for (int i = 0; i < TEAM_SIZE; i++) {
-                    draw_character_option_panel(&p->team[i], i, sx, sy + i * (sh + UI_GAP), sw, sh, i == p->active_idx, hover_char == i, !p->team[i].is_alive);
+                    get_team_slot_rect(player_id, i, &switch_rects[i]);
                 }
                 draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
-                draw_overlay_message_kind("Choose a living team member.", UI_MSG_HINT);
+                draw_overlay_message_kind("Choose a living member from your side panel.", UI_MSG_HINT);
                 end_deferred_present();
                 need_redraw = 0;
             }
@@ -1536,8 +1658,7 @@ switch_select:
             int new_hover_back = 0;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
             for (int i = 0; i < TEAM_SIZE; i++) {
-                int ry = sy + i * (sh + UI_GAP);
-                if (point_in_rect(m.x, m.y, sx, ry, sw, sh)) {
+                if (point_in_ui_rect(m.x, m.y, &switch_rects[i])) {
                     new_hover_char = i;
                     break;
                 }
@@ -1553,8 +1674,7 @@ switch_select:
                 goto main_menu;
             }
             for (int i = 0; i < TEAM_SIZE; i++) {
-                int ry = sy + i * (sh + UI_GAP);
-                if (!point_in_rect(m.x, m.y, sx, ry, sw, sh)) continue;
+                if (!point_in_ui_rect(m.x, m.y, &switch_rects[i])) continue;
                 if (!p->team[i].is_alive) {
                     draw_overlay_message_kind("Character is defeated", UI_MSG_ERROR);
                     break;
@@ -1859,7 +1979,7 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 single_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
-    int max_rows = 8;
+    int max_rows = visible_card_rows_for_current_layout();
     int show = g_card_count < max_rows ? g_card_count : max_rows;
     UiRect card_rects[MAX_GLOBAL_CARDS] = {};
     UiRect finish_rect = {};
@@ -1950,7 +2070,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 multi_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int max_rows = 8;
+    int max_rows = visible_card_rows_for_current_layout();
     int show = g_card_count < max_rows ? g_card_count : max_rows;
     UiRect card_rects[MAX_GLOBAL_CARDS] = {};
     UiRect minus_rects[MAX_GLOBAL_CARDS] = {};
