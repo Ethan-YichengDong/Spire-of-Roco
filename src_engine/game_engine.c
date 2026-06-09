@@ -215,6 +215,7 @@ Action GetPlayer2Action(GameState state, int mode) {
 }
 
 // 回合内循环：允许同一玩家连续出牌，直到能量耗尽或主动结束回合
+#if 0
 static void PlayerTurnLoop(GameState* state, int player_id, int mode) {
     Player* player = (player_id == 1) ? &state->p1 : &state->p2;
 
@@ -256,13 +257,215 @@ static void PlayerTurnLoop(GameState* state, int player_id, int mode) {
         LogGameState("AfterAction", state);
     }
 }
+#endif
+
+static int HasExplicitSingleTarget(GameState* state, Action action, int player_id) {
+    Player* acting = (player_id == 1) ? &state->p1 : &state->p2;
+
+    if (action.type != ACTION_PLAY_CARD) return 1;
+    if (action.card_hand_idx < 0 || action.card_hand_idx >= acting->hand_count) return 0;
+
+    Card* card = &acting->hand[action.card_hand_idx];
+    if (card->target_type != TARGET_ENEMY_SINGLE && card->target_type != TARGET_SELF_SINGLE) {
+        return 1;
+    }
+
+    if (card->target_type == TARGET_SELF_SINGLE &&
+        action.target_idx >= 10 &&
+        action.target_idx < 10 + TEAM_SIZE) {
+        return 1;
+    }
+
+    return action.target_idx >= 0 && action.target_idx < TEAM_SIZE;
+}
+
+static int IsCompletePlannedAction(GameState* state, Action action, int player_id) {
+    Player* acting = (player_id == 1) ? &state->p1 : &state->p2;
+
+    if (action.type == ACTION_SWITCH_CHAR) {
+        return action.switch_to_idx >= 0 &&
+               action.switch_to_idx < TEAM_SIZE &&
+               acting->team[action.switch_to_idx].is_alive;
+    }
+
+    if (action.type != ACTION_PLAY_CARD) return 1;
+    if (action.card_hand_idx < 0 || action.card_hand_idx >= acting->hand_count) return 0;
+    if (acting->energy < acting->hand[action.card_hand_idx].energy_cost) return 0;
+    return HasExplicitSingleTarget(state, action, player_id);
+}
+
+static void BuildActionSummary(GameState* state, Action action, int player_id, char* out, size_t out_size) {
+    Player* acting = (player_id == 1) ? &state->p1 : &state->p2;
+    Player* enemy = (player_id == 1) ? &state->p2 : &state->p1;
+
+    if (action.type == ACTION_PLAY_CARD &&
+        action.card_hand_idx >= 0 &&
+        action.card_hand_idx < acting->hand_count) {
+        Card* card = &acting->hand[action.card_hand_idx];
+        char target_name[64];
+        if (card->target_type == TARGET_ENEMY_ALL) {
+            snprintf(target_name, sizeof(target_name), "all enemies");
+        } else if (card->target_type == TARGET_SELF_ALL) {
+            snprintf(target_name, sizeof(target_name), "all allies");
+        } else if (card->target_type == TARGET_SELF_SINGLE) {
+            int idx = action.target_idx;
+            if (idx >= 10 && idx < 10 + TEAM_SIZE) idx -= 10;
+            if (idx < 0 || idx >= TEAM_SIZE) idx = acting->active_idx;
+            snprintf(target_name, sizeof(target_name), "%s", acting->team[idx].name);
+        } else {
+            int idx = action.target_idx;
+            if (idx < 0 || idx >= TEAM_SIZE) idx = enemy->active_idx;
+            snprintf(target_name, sizeof(target_name), "%s", enemy->team[idx].name);
+        }
+        snprintf(out, out_size, "P%d Play %s -> %s (cost %d)",
+                 player_id, card->name, target_name, card->energy_cost);
+        return;
+    }
+
+    if (action.type == ACTION_SWITCH_CHAR &&
+        action.switch_to_idx >= 0 &&
+        action.switch_to_idx < TEAM_SIZE) {
+        snprintf(out, out_size, "P%d Switch to %s", player_id, acting->team[action.switch_to_idx].name);
+        return;
+    }
+
+    snprintf(out, out_size, "P%d %s", player_id, ActionName(action.type));
+}
+
+static void ReplayPlannedPrefix(GameState* planning, const GameState* round_start, ActionRecord* records, int record_count) {
+    *planning = *round_start;
+    for (int i = 0; i < record_count; i++) {
+        Action action = records[i].action;
+        action = NormalizeActionForCurrentState(planning, action, records[i].player_id);
+        if (action.type != ACTION_END_TURN && action.type != ACTION_NONE) {
+            ExecuteAction(planning, &action, records[i].player_id);
+        }
+    }
+}
+
+static void CollectPlayerPlan(GameState* round_start, int player_id, int mode, ActionRecord* out_records, int* out_count) {
+    GameState planning;
+    int count = 0;
+    ReplayPlannedPrefix(&planning, round_start, out_records, 0);
+
+    while (count < MAX_TURN_ACTIONS) {
+        Player* player = (player_id == 1) ? &planning.p1 : &planning.p2;
+        if (!PlayerHasAliveCharacter(player)) break;
+        if (!player->team[player->active_idx].is_alive) {
+            remove_dead_from_team(player, player->active_idx);
+        }
+
+        RenderGameBoard(planning);
+
+        int edit_index = -1;
+        Action action;
+        if (player_id == 2 && mode == MODE_PVE) {
+            action = GetAIActionFromBackend(planning, 2);
+        } else {
+            action = GetPlannedInputFromUI(player_id, planning, out_records, count, &edit_index);
+        }
+
+        if (action.type == ACTION_EDIT_STEP) {
+            if (edit_index >= 0 && edit_index < count) {
+                count = edit_index;
+                ReplayPlannedPrefix(&planning, round_start, out_records, count);
+            }
+            continue;
+        }
+
+        if (!IsCompletePlannedAction(&planning, action, player_id)) {
+            printf("[Engine] Ignored incomplete planned action from P%d.\n", player_id);
+            continue;
+        }
+
+        action = NormalizeActionForCurrentState(&planning, action, player_id);
+        if (action.type == ACTION_END_TURN || action.type == ACTION_NONE) break;
+
+        out_records[count].action = action;
+        out_records[count].player_id = player_id;
+        BuildActionSummary(&planning, action, player_id,
+                           out_records[count].summary,
+                           sizeof(out_records[count].summary));
+
+        ExecuteAction(&planning, &action, player_id);
+        count++;
+    }
+
+    *out_count = count;
+}
+
+static void ResolveOneRecord(GameState* state, ActionRecord* record, int step_number, int step_total) {
+    Player* acting = (record->player_id == 1) ? &state->p1 : &state->p2;
+    if (!PlayerHasAliveCharacter(acting)) return;
+    if (!acting->team[acting->active_idx].is_alive) {
+        remove_dead_from_team(acting, acting->active_idx);
+    }
+    if (!PlayerHasAliveCharacter(acting)) return;
+
+    if (!HasExplicitSingleTarget(state, record->action, record->player_id)) {
+        printf("[Engine] Skipped incomplete recorded card action from P%d.\n", record->player_id);
+        return;
+    }
+
+    Action action = NormalizeActionForCurrentState(state, record->action, record->player_id);
+    if (action.type == ACTION_END_TURN || action.type == ACTION_NONE) return;
+
+    if (g_battle_log != NULL) {
+        fprintf(g_battle_log, "\n[ResolvedAction]\n");
+        LogAction(state, action);
+    }
+
+    ResolutionReport report;
+    ExecuteActionWithReport(state, &action, record->player_id, &report);
+    LogGameState("AfterResolvedAction", state);
+    ShowResolutionStep(*state, record, &report, step_number, step_total);
+}
+
+static void ResolvePlannedRound(GameState* state,
+                                int first_player_id,
+                                ActionRecord* p1_records,
+                                int p1_count,
+                                ActionRecord* p2_records,
+                                int p2_count) {
+    ActionRecord* first_records = (first_player_id == 1) ? p1_records : p2_records;
+    ActionRecord* second_records = (first_player_id == 1) ? p2_records : p1_records;
+    int first_count = (first_player_id == 1) ? p1_count : p2_count;
+    int second_count = (first_player_id == 1) ? p2_count : p1_count;
+    int second_player_id = (first_player_id == 1) ? 2 : 1;
+    int total_steps = first_count + second_count;
+    int step = 1;
+
+    if (total_steps <= 0) {
+        ShowResolutionStep(*state, NULL, NULL, 1, 1);
+        return;
+    }
+
+    for (int i = 0; i < first_count; i++) {
+        ResolveOneRecord(state, &first_records[i], step++, total_steps);
+    }
+
+    Player* second_player = (second_player_id == 1) ? &state->p1 : &state->p2;
+    if (!PlayerHasAliveCharacter(second_player)) {
+        ActionRecord skipped;
+        memset(&skipped, 0, sizeof(skipped));
+        skipped.player_id = second_player_id;
+        skipped.action.type = ACTION_NONE;
+        snprintf(skipped.summary, sizeof(skipped.summary),
+                 "P%d is defeated; remaining actions skipped", second_player_id);
+        ShowResolutionStep(*state, &skipped, NULL, step, total_steps);
+        return;
+    }
+
+    for (int i = 0; i < second_count; i++) {
+        ResolveOneRecord(state, &second_records[i], step++, total_steps);
+        if (!PlayerHasAliveCharacter(second_player)) break;
+    }
+}
 
 // ============================================================
 //  选角阶段：为指定玩家填充3个角色（不重复）
 // ============================================================
 static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* state) {
-    int retries = 0;
-
     int slot = 0;
     while (slot < TEAM_SIZE) {
         int picks[TEAM_SIZE]; int pick_count = 0;
@@ -298,7 +501,7 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
                 continue;
             }
             assign_character_to_team(player, g_all_characters[char_idx].char_id, slot);
-            slot++; retries = 0;
+            slot++;
         }
 
         RenderGameBoard(*state);
@@ -439,28 +642,34 @@ void RunGameLoop() {
     while ((max_rounds == 0 || state.round_count <= max_rounds) &&
            PlayerHasAliveCharacter(&state.p1) &&
            PlayerHasAliveCharacter(&state.p2)) {
+        ActionRecord p1_records[MAX_TURN_ACTIONS];
+        ActionRecord p2_records[MAX_TURN_ACTIONS];
+        int p1_count = 0;
+        int p2_count = 0;
+        memset(p1_records, 0, sizeof(p1_records));
+        memset(p2_records, 0, sizeof(p2_records));
         LogGameState("BeforeRound", &state);
 
         if (p1_first) {
             state.current_turn = 1;
             ShowTurnTransitionMask(1);
-            PlayerTurnLoop(&state, 1, mode);
-
-            if (!PlayerHasAliveCharacter(&state.p2)) break;
+            CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
 
             state.current_turn = 2;
             ShowTurnTransitionMask(2);
-            PlayerTurnLoop(&state, 2, mode);
+            CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
+
+            ResolvePlannedRound(&state, 1, p1_records, p1_count, p2_records, p2_count);
         } else {
             state.current_turn = 2;
             ShowTurnTransitionMask(2);
-            PlayerTurnLoop(&state, 2, mode);
-
-            if (!PlayerHasAliveCharacter(&state.p1)) break;
+            CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
 
             state.current_turn = 1;
             ShowTurnTransitionMask(1);
-            PlayerTurnLoop(&state, 1, mode);
+            CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
+
+            ResolvePlannedRound(&state, 2, p1_records, p1_count, p2_records, p2_count);
         }
 
         EndTurn(&state);

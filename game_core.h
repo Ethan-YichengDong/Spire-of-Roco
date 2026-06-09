@@ -6,6 +6,9 @@
 #define TEAM_SIZE       3       // 每个队伍的角色数量
 #define MAX_HAND_SIZE   10      // 最大手牌数量
 #define MAX_DECK_SIZE   30      // 卡组最大容量
+#define MAX_TURN_ACTIONS 16     // 每名玩家单轮最多记录的操作数
+#define MAX_ACTION_SUMMARY_LEN 128
+#define MAX_RESOLUTION_EVENTS TEAM_SIZE
 
 // 元素属性定义：普通、水、火、草、电
 typedef enum { ELEMENT_NORMAL = 0, ELEMENT_WATER, ELEMENT_FIRE, ELEMENT_GRASS, ELEMENT_ELECTRIC } ElementType;
@@ -14,7 +17,7 @@ typedef enum { CARD_TYPE_ATTACK = 0, CARD_TYPE_SKILL, CARD_TYPE_POWER } CardType
 // 状态/增益效果定义：无、护盾、潮湿、燃烧、中毒、力量Buff
 typedef enum { BUFF_NONE = 0, BUFF_SHIELD, BUFF_WET, BUFF_BURN, BUFF_POISON, BUFF_POWER, BUFF_COUNT } BuffType;
 // 行动类型定义：无、出牌、切换角色、结束回合
-typedef enum { ACTION_NONE = 0, ACTION_PLAY_CARD, ACTION_SWITCH_CHAR, ACTION_END_TURN } ActionType;
+typedef enum { ACTION_NONE = 0, ACTION_PLAY_CARD, ACTION_SWITCH_CHAR, ACTION_END_TURN, ACTION_EDIT_STEP } ActionType;
 // 卡牌目标类型定义：敌方单体、敌方全体、己方单体、己方全体
 typedef enum { TARGET_ENEMY_SINGLE = 0, TARGET_ENEMY_ALL, TARGET_SELF_SINGLE, TARGET_SELF_ALL } TargetType;
 
@@ -88,5 +91,27 @@ typedef struct {
     int switch_to_idx;          // 当切换角色时使用，记录目标角色索引
     int target_idx;             // 目标对象的索引（用于指定技能和普攻释放目标）
 } Action;
+
+typedef struct {
+    Action action;
+    int player_id;
+    char summary[MAX_ACTION_SUMMARY_LEN];
+} ActionRecord;
+
+typedef struct {
+    char target_name[MAX_NAME_LEN];
+    int raw_damage;
+    int element_bonus_damage;
+    int shield_absorbed;
+    int final_damage;
+    int hp_before;
+    int hp_after;
+    int has_damage;
+} DamageResolutionEvent;
+
+typedef struct {
+    int event_count;
+    DamageResolutionEvent events[MAX_RESOLUTION_EVENTS];
+} ResolutionReport;
 
 #endif // GAME_CORE_H

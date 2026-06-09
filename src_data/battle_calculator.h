@@ -17,4 +17,6 @@ void ExecuteAction(GameState* state, Action* action, int acting_player_id);
 // 回合结束清理：Buff递减、能量回满、手牌补满、阵亡出战切换
 void EndTurn(GameState* state);
 
+void ExecuteActionWithReport(GameState* state, Action* action, int acting_player_id, ResolutionReport* report);
+
 #endif // BATTLE_CALCULATOR_H

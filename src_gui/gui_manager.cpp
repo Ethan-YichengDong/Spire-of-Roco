@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <string>
 static int g_draw_y = 10;
+void print_character(const Character* ch);
 static void reset_draw_y() {
     g_draw_y = 10;
     setbkcolor(WHITE);
@@ -43,6 +44,77 @@ static void settextstyle_utf8(int height, int width, const char* utf8Name) {
 }
 static void draw_line(const char* s) { outtextxy_utf8(10, g_draw_y, s); g_draw_y += 24; }
 #ifdef USE_EASYX
+static void draw_overlay_message(const char* utf8msg);
+
+static void present_frame() {
+    FlushBatchDraw();
+}
+
+static void draw_status_bar(const GameState* st, int acting_player_id, const char* phase) {
+    if (!st) return;
+    char buf[256];
+    setfillcolor(RGB(238, 244, 252));
+    setlinecolor(RGB(70, 95, 130));
+    fillrectangle(0, 0, 800, 36);
+    rectangle(0, 0, 799, 36);
+    settextcolor(BLACK);
+    snprintf(buf, sizeof(buf), "Round %d", st->round_count);
+    outtextxy_utf8(16, 9, buf);
+    snprintf(buf, sizeof(buf), "Acting Player: P%d", acting_player_id > 0 ? acting_player_id : st->current_turn);
+    outtextxy_utf8(150, 9, buf);
+    if (phase && phase[0] != '\0') {
+        snprintf(buf, sizeof(buf), "Phase: %s", phase);
+        outtextxy_utf8(340, 9, buf);
+    }
+    g_draw_y = 46;
+}
+
+static void drain_easyx_input() {
+    while (MouseHit()) {
+        GetMouseMsg();
+    }
+    Sleep(80);
+    while (MouseHit()) {
+        GetMouseMsg();
+    }
+    while ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+           (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
+           (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
+        Sleep(10);
+    }
+    int any_down = 1;
+    while (any_down) {
+        any_down = 0;
+        for (int vk = 8; vk <= 255; vk++) {
+            if (GetAsyncKeyState(vk) & 0x8000) {
+                any_down = 1;
+                break;
+            }
+        }
+        if (any_down) Sleep(10);
+    }
+}
+
+static void wait_for_fresh_ack(const char* prompt) {
+    draw_overlay_message(prompt);
+    drain_easyx_input();
+    while (1) {
+        if (MouseHit()) {
+            MOUSEMSG mm = GetMouseMsg();
+            if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
+        }
+        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+            (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
+            (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
+            return;
+        }
+        for (int vk = 8; vk <= 255; vk++) {
+            if (GetAsyncKeyState(vk) & 0x8000) return;
+        }
+        Sleep(10);
+    }
+}
+
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
     return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
 }
@@ -55,6 +127,7 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
     rectangle(x, y, x + w, y + h);
     settextcolor(BLACK);
     outtextxy_utf8(x + 6, y + 6, label);
+    present_frame();
 }
 
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
@@ -70,17 +143,7 @@ static void draw_button_with_check(int x, int y, int w, int h, const char* label
     // Draw label shifted right to avoid marker
     settextcolor(BLACK);
     outtextxy_utf8(x + 30, y + 6, label);
-}
-
-static int wait_click_in_rect(int rx, int ry, int rw, int rh) {
-    MOUSEMSG m;
-    while (1) {
-        m = GetMouseMsg();
-        if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, rx, ry, rw, rh)) return 1;
-        }
-    }
-    return 0;
+    present_frame();
 }
 
 // Draw a non-intrusive overlay message at the bottom of the screen to avoid
@@ -94,13 +157,14 @@ static void draw_overlay_message(const char* utf8msg) {
     rectangle(x, y, x + w, y + h);
     settextcolor(BLACK);
     outtextxy(x + 6, y + 10, s.c_str());
+    present_frame();
 }
 
 // Render both teams' characters and HP on a side panel (right side) so that
 // their HP is always visible during the turn.
 static void draw_team_hp_panel(const GameState* st) {
     if (!st) return;
-    int x = 480, y = 10; // shifted left slightly to avoid overflow
+    int x = 480, y = 48; // shifted left slightly to avoid overflow and status bar
     char buf[128];
     setfillcolor(WHITE);
     setlinecolor(BLACK);
@@ -123,6 +187,76 @@ static void draw_team_hp_panel(const GameState* st) {
     }
 }
 
+static void draw_button_disabled(int x, int y, int w, int h, const char* label) {
+    setfillcolor(RGB(225, 225, 225));
+    setlinecolor(RGB(150, 150, 150));
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
+    settextcolor(RGB(120, 120, 120));
+    outtextxy_utf8(x + 6, y + 6, label);
+    settextcolor(BLACK);
+    present_frame();
+}
+
+static Player* mutable_player(GameState* st, int player_id) {
+    return (player_id == st->p1.player_id) ? &st->p1 : &st->p2;
+}
+
+static void draw_action_records_panel(const ActionRecord* records, int record_count, int player_id) {
+    int x = 480, y = 260, w = 285, h = 260;
+    char buf[256];
+    int shown = 0;
+    setfillcolor(WHITE);
+    setlinecolor(BLACK);
+    fillrectangle(x, y, x + w, y + h);
+    rectangle(x, y, x + w, y + h);
+    settextcolor(BLACK);
+    snprintf(buf, sizeof(buf), "P%d Card Records", player_id);
+    outtextxy_utf8(x + 8, y + 8, buf);
+    int line_y = y + 36;
+    for (int i = 0; i < record_count && shown < 10; i++) {
+        if (records[i].action.type != ACTION_PLAY_CARD) continue;
+        snprintf(buf, sizeof(buf), "%02d. %s", shown + 1, records[i].summary);
+        outtextxy_utf8(x + 8, line_y, buf);
+        line_y += 22;
+        shown++;
+    }
+    if (shown == 0) {
+        outtextxy_utf8(x + 8, y + 36, "No card records");
+    }
+}
+
+static int has_card_record(const ActionRecord* records, int record_count) {
+    for (int i = 0; i < record_count; i++) {
+        if (records[i].action.type == ACTION_PLAY_CARD) return 1;
+    }
+    return 0;
+}
+
+static void reset_pending_action(Action* act, int player_id) {
+    act->type = ACTION_NONE;
+    act->actor_id = player_id;
+    act->card_hand_idx = -1;
+    act->switch_to_idx = -1;
+    act->target_idx = -1;
+}
+
+static void draw_planning_shell(GameState* st, int player_id, const ActionRecord* records, int record_count, const char* title) {
+    reset_draw_y();
+    draw_status_bar(st, player_id, "Planning");
+    draw_team_hp_panel(st);
+    draw_action_records_panel(records, record_count, player_id);
+    Player* p = mutable_player(st, player_id);
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", title);
+    draw_line(buf);
+    snprintf(buf, sizeof(buf), "Energy: %d/%d", p->energy, p->max_energy);
+    draw_line(buf);
+    draw_line("Active:");
+    print_character(&p->team[p->active_idx]);
+    present_frame();
+}
+
 #endif
 #else
 // no graphical helpers
@@ -133,10 +267,13 @@ static void draw_team_hp_panel(const GameState* st) {
 void InitGUI() {
 #ifdef USE_EASYX
     initgraph(800,600);
+    BeginBatchDraw();
     setbkcolor(WHITE);
     settextcolor(BLACK);
     cleardevice();
     settextstyle_utf8(20,0,"SimSun");
+    outtextxy_utf8(20, 20, "Spire of Roco loading...");
+    present_frame();
 #else
     // 控制台不需要特别初始化
 #endif
@@ -144,6 +281,7 @@ void InitGUI() {
 
 void CloseGUI() {
 #ifdef USE_EASYX
+    EndBatchDraw();
     closegraph();
 #else
     // 控制台不需要特别释放
@@ -181,6 +319,7 @@ void print_card(const Card* c, int idx) {
 void RenderGameBoard(GameState state) {
 #ifdef USE_EASYX
     reset_draw_y();
+    draw_status_bar(&state, state.current_turn, "Board");
     char buf[256];
     snprintf(buf,sizeof(buf), "=== Game Board (Round:%d) Current Turn: Player %d ===", state.round_count, state.current_turn);
     draw_line(buf);
@@ -206,6 +345,7 @@ void RenderGameBoard(GameState state) {
     }
 
     draw_line("========================================");
+    present_frame();
 #else
     printf("\n=== Game Board (Round:%d) Current Turn: Player %d ===\n", state.round_count, state.current_turn);
 
@@ -261,6 +401,7 @@ static void wait_for_enter(const char* prompt) {
 void ShowTurnTransitionMask(int player_id) {
 #ifdef USE_EASYX
     char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_overlay_message(buf);
+    present_frame();
     wait_for_enter("Press any key to continue...");
 #else
     printf("\n---- Turn: Player %d ----\n", player_id);
@@ -466,6 +607,268 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
             return act;
         }
         else { printf("Unknown option, please try again.\n"); }
+    }
+#endif
+}
+
+Action GetPlannedInputFromUI(int player_id, GameState state, const ActionRecord* records, int record_count, int* edit_index) {
+    Action act;
+    reset_pending_action(&act, player_id);
+    if (edit_index) *edit_index = -1;
+
+#ifdef USE_EASYX
+    Player* p = mutable_player(&state, player_id);
+    MOUSEMSG m;
+    char buf[256];
+
+main_menu:
+    p = mutable_player(&state, player_id);
+    draw_planning_shell(&state, player_id, records, record_count, "Plan your turn");
+    {
+        int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
+        draw_button(bx, by, bw, bh, "End Turn");
+        draw_button(bx, by + 55, bw, bh, "Play Card");
+        draw_button(bx, by + 110, bw, bh, "Switch Character");
+        int can_edit = has_card_record(records, record_count);
+        if (can_edit) draw_button(bx, by + 165, bw, bh, "Edit Card");
+        else draw_button_disabled(bx, by + 165, bw, bh, "Edit Action");
+        while (1) {
+            m = GetMouseMsg();
+            if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) {
+                act.type = ACTION_END_TURN;
+                return act;
+            }
+            if (point_in_rect(m.x, m.y, bx, by + 55, bw, bh)) {
+                if (p->hand_count <= 0) {
+                    draw_overlay_message("Hand empty");
+                    continue;
+                }
+                goto card_select;
+            }
+            if (point_in_rect(m.x, m.y, bx, by + 110, bw, bh)) {
+                goto switch_select;
+            }
+            if (can_edit && point_in_rect(m.x, m.y, bx, by + 165, bw, bh)) {
+                goto edit_select;
+            }
+        }
+    }
+
+card_select:
+    p = mutable_player(&state, player_id);
+    draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
+    {
+        int cx = 30, cy = g_draw_y + 10, cw = 380, ch = 36;
+        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        for (int i = 0; i < p->hand_count; i++) {
+            snprintf(buf, sizeof(buf), "[%d] %s  Cost:%d", i, p->hand[i].name, p->hand[i].energy_cost);
+            if (p->energy >= p->hand[i].energy_cost) {
+                draw_button(cx, cy + i * (ch + 6), cw, ch, buf);
+            } else {
+                draw_button_disabled(cx, cy + i * (ch + 6), cw, ch, buf);
+            }
+        }
+        draw_button(back_x, back_y, back_w, back_h, "Back");
+        while (1) {
+            m = GetMouseMsg();
+            if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
+                reset_pending_action(&act, player_id);
+                goto main_menu;
+            }
+            for (int i = 0; i < p->hand_count; i++) {
+                int ry = cy + i * (ch + 6);
+                if (!point_in_rect(m.x, m.y, cx, ry, cw, ch)) continue;
+                if (p->energy < p->hand[i].energy_cost) {
+                    draw_overlay_message("Not enough energy");
+                    break;
+                }
+                act.type = ACTION_PLAY_CARD;
+                act.card_hand_idx = i;
+                act.actor_id = player_id;
+                if (p->hand[i].target_type == TARGET_ENEMY_SINGLE || p->hand[i].target_type == TARGET_SELF_SINGLE) {
+                    goto target_select;
+                }
+                act.target_idx = (p->hand[i].target_type == TARGET_ENEMY_ALL) ? -1 : -2;
+                return act;
+            }
+        }
+    }
+
+target_select:
+    p = mutable_player(&state, player_id);
+    draw_planning_shell(&state, player_id, records, record_count, "Choose a target");
+    {
+        Card* c = &p->hand[act.card_hand_idx];
+        Character* target_team = NULL;
+        if (c->target_type == TARGET_SELF_SINGLE) {
+            target_team = p->team;
+        } else {
+            target_team = (player_id == state.p1.player_id) ? state.p2.team : state.p1.team;
+        }
+        snprintf(buf, sizeof(buf), "Card: %s", c->name);
+        draw_line(buf);
+        int tx = 60, ty = g_draw_y + 20, tw = 340, th = 42;
+        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        for (int t = 0; t < TEAM_SIZE; t++) {
+            snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", t, target_team[t].name, target_team[t].hp, target_team[t].max_hp);
+            if (target_team[t].is_alive || c->target_type == TARGET_SELF_SINGLE) draw_button(tx, ty + t * (th + 8), tw, th, buf);
+            else draw_button_disabled(tx, ty + t * (th + 8), tw, th, buf);
+        }
+        draw_button(back_x, back_y, back_w, back_h, "Back");
+        while (1) {
+            m = GetMouseMsg();
+            if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
+                reset_pending_action(&act, player_id);
+                goto main_menu;
+            }
+            for (int t = 0; t < TEAM_SIZE; t++) {
+                int ry = ty + t * (th + 8);
+                if (!point_in_rect(m.x, m.y, tx, ry, tw, th)) continue;
+                if (!target_team[t].is_alive && c->target_type != TARGET_SELF_SINGLE) {
+                    draw_overlay_message("Target is defeated");
+                    break;
+                }
+                act.target_idx = t;
+                return act;
+            }
+        }
+    }
+
+switch_select:
+    p = mutable_player(&state, player_id);
+    draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
+    {
+        int sx = 60, sy = g_draw_y + 20, sw = 340, sh = 46;
+        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        for (int i = 0; i < TEAM_SIZE; i++) {
+            snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", i, p->team[i].name, p->team[i].hp, p->team[i].max_hp);
+            if (p->team[i].is_alive) draw_button(sx, sy + i * (sh + 8), sw, sh, buf);
+            else draw_button_disabled(sx, sy + i * (sh + 8), sw, sh, buf);
+        }
+        draw_button(back_x, back_y, back_w, back_h, "Back");
+        while (1) {
+            m = GetMouseMsg();
+            if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
+                reset_pending_action(&act, player_id);
+                goto main_menu;
+            }
+            for (int i = 0; i < TEAM_SIZE; i++) {
+                int ry = sy + i * (sh + 8);
+                if (!point_in_rect(m.x, m.y, sx, ry, sw, sh)) continue;
+                if (!p->team[i].is_alive) {
+                    draw_overlay_message("Character is defeated");
+                    break;
+                }
+                act.type = ACTION_SWITCH_CHAR;
+                act.switch_to_idx = i;
+                act.actor_id = player_id;
+                return act;
+            }
+        }
+    }
+
+edit_select:
+    draw_planning_shell(&state, player_id, records, record_count, "Edit an action");
+    {
+        int ex = 30, ey = g_draw_y + 10, ew = 420, eh = 36;
+        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        int display_to_record[MAX_TURN_ACTIONS];
+        int display_count = 0;
+        for (int i = 0; i < record_count && i < MAX_TURN_ACTIONS; i++) {
+            if (records[i].action.type != ACTION_PLAY_CARD) continue;
+            display_to_record[display_count] = i;
+            snprintf(buf, sizeof(buf), "%02d. %s", display_count + 1, records[i].summary);
+            draw_button(ex, ey + display_count * (eh + 6), ew, eh, buf);
+            display_count++;
+        }
+        draw_button(back_x, back_y, back_w, back_h, "Back");
+        while (1) {
+            m = GetMouseMsg();
+            if (m.uMsg != WM_LBUTTONDOWN) continue;
+            if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
+                reset_pending_action(&act, player_id);
+                goto main_menu;
+            }
+            for (int i = 0; i < display_count; i++) {
+                int ry = ey + i * (eh + 6);
+                if (point_in_rect(m.x, m.y, ex, ry, ew, eh)) {
+                    if (edit_index) *edit_index = display_to_record[i];
+                    act.type = ACTION_EDIT_STEP;
+                    act.actor_id = player_id;
+                    return act;
+                }
+            }
+        }
+    }
+#else
+    return GetHumanInputFromUI(player_id, state);
+#endif
+}
+
+void ShowResolutionStep(GameState state, const ActionRecord* record, const ResolutionReport* report, int step_number, int step_total) {
+#ifdef USE_EASYX
+    reset_draw_y();
+    draw_status_bar(&state, record ? record->player_id : state.current_turn, "Resolution");
+    draw_team_hp_panel(&state);
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Round Resolution  %d/%d", step_number, step_total);
+    draw_line(buf);
+    if (record) {
+        snprintf(buf, sizeof(buf), "Resolving: %s", record->summary);
+        draw_line(buf);
+    } else {
+        draw_line("Resolving: No actions to resolve");
+    }
+    draw_line("Current battle state:");
+    snprintf(buf, sizeof(buf), "P1 Active: %s HP:%d/%d  Energy:%d/%d",
+             state.p1.team[state.p1.active_idx].name,
+             state.p1.team[state.p1.active_idx].hp,
+             state.p1.team[state.p1.active_idx].max_hp,
+             state.p1.energy, state.p1.max_energy);
+    draw_line(buf);
+    snprintf(buf, sizeof(buf), "P2 Active: %s HP:%d/%d  Energy:%d/%d",
+             state.p2.team[state.p2.active_idx].name,
+             state.p2.team[state.p2.active_idx].hp,
+             state.p2.team[state.p2.active_idx].max_hp,
+             state.p2.energy, state.p2.max_energy);
+    draw_line(buf);
+    if (report && report->event_count > 0) {
+        draw_line("Damage details:");
+        for (int i = 0; i < report->event_count; i++) {
+            const DamageResolutionEvent* event = &report->events[i];
+            if (!event->has_damage) continue;
+            snprintf(buf, sizeof(buf), "%s: %d -> %d  Damage:%d  Element:+%d  Shield:%d",
+                     event->target_name,
+                     event->hp_before,
+                     event->hp_after,
+                     event->final_damage,
+                     event->element_bonus_damage,
+                     event->shield_absorbed);
+            draw_line(buf);
+        }
+    } else {
+        draw_line("Damage details: no damage");
+    }
+    present_frame();
+    wait_for_fresh_ack("Click or press any key to continue...");
+#else
+    printf("[Resolution %d/%d] %s\n", step_number, step_total, record ? record->summary : "");
+    if (report && report->event_count > 0) {
+        for (int i = 0; i < report->event_count; i++) {
+            const DamageResolutionEvent* event = &report->events[i];
+            if (!event->has_damage) continue;
+            printf("  %s damage=%d element_bonus=%d shield=%d hp=%d->%d\n",
+                   event->target_name,
+                   event->final_damage,
+                   event->element_bonus_damage,
+                   event->shield_absorbed,
+                   event->hp_before,
+                   event->hp_after);
+        }
     }
 #endif
 }

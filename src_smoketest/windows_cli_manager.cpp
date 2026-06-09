@@ -59,6 +59,39 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     return act;
 }
 
+Action GetPlannedInputFromUI(int player_id, GameState state, const ActionRecord* records, int record_count, int* edit_index) {
+    if (edit_index) *edit_index = -1;
+    if (record_count > 0) {
+        printf("[CLI] Player %d planned card records:\n", player_id);
+        for (int i = 0; i < record_count; i++) {
+            if (records[i].action.type != ACTION_PLAY_CARD) continue;
+            printf("  %d. %s\n", i + 1, records[i].summary);
+        }
+    }
+    return GetHumanInputFromUI(player_id, state);
+}
+
+void ShowResolutionStep(GameState state, const ActionRecord* record, const ResolutionReport* report, int step_number, int step_total) {
+    printf("\n>>> [Resolution %d/%d] %s\n",
+           step_number,
+           step_total,
+           record ? record->summary : "");
+    if (report && report->event_count > 0) {
+        for (int i = 0; i < report->event_count; i++) {
+            const DamageResolutionEvent* event = &report->events[i];
+            if (!event->has_damage) continue;
+            printf("    %s damage=%d element_bonus=%d shield=%d hp=%d->%d\n",
+                   event->target_name,
+                   event->final_damage,
+                   event->element_bonus_damage,
+                   event->shield_absorbed,
+                   event->hp_before,
+                   event->hp_after);
+        }
+    }
+    RenderGameBoard(state);
+}
+
 int SelectCharacterFromUI(int player_id, int slot_number) {
     int p1_defaults[] = {0, 1, 2};
     int p2_defaults[] = {3, 0, 1};
@@ -74,6 +107,26 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     return selected;
 }
 
+int SelectMultipleCharactersFromUI(int player_id, const GameState* state, int max_select, int* out_indices, int* out_count) {
+    (void)state;
+    int p1_defaults[] = {0, 1, 2};
+    int p2_defaults[] = {3, 0, 1};
+    int count = 0;
+
+    if (g_char_count <= 0) {
+        if (out_count) *out_count = 0;
+        return 0;
+    }
+
+    for (int i = 0; i < max_select && i < TEAM_SIZE; i++) {
+        int selected = (player_id == 1) ? p1_defaults[i] : p2_defaults[i];
+        out_indices[count++] = selected % g_char_count;
+    }
+    if (out_count) *out_count = count;
+    printf("[CLI] Player %d auto-selected %d characters\n", player_id, count);
+    return count;
+}
+
 int SelectCardFromUI(int player_id, int current_deck_size) {
     if (current_deck_size >= 16) return -1;
     if (g_card_count <= 0) return -1;
@@ -82,6 +135,23 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     printf("[CLI] Player %d auto-selected deck card %d index %d\n",
            player_id, current_deck_size + 1, selected);
     return selected;
+}
+
+int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
+    int desired = max_select < 16 ? max_select : 16;
+    int count = 0;
+
+    if (g_card_count <= 0) {
+        if (out_count) *out_count = 0;
+        return 0;
+    }
+
+    for (int i = 0; i < desired; i++) {
+        out_indices[count++] = (i / 2) % g_card_count;
+    }
+    if (out_count) *out_count = count;
+    printf("[CLI] Player %d auto-selected %d deck cards\n", player_id, count);
+    return -count;
 }
 
 int GetModeSelectionFromUI() {

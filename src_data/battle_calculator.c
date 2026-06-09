@@ -1,6 +1,7 @@
 #include "battle_calculator.h"
 #include "data_manager.h"
 #include <stdio.h>
+#include <string.h>
 
 // ============================================================
 //  内部辅助函数（static，仅本文件可见）
@@ -40,6 +41,42 @@ static void decrement_buffs(Character* c) {
             c->buffs[i]--;
         }
     }
+}
+
+static int get_element_multiplier(int raw_damage, ElementType attack_element, Character* target) {
+    int multiplier = 1;
+
+    if (attack_element == ELEMENT_WATER && target->element == ELEMENT_FIRE) multiplier *= 2;
+    else if (attack_element == ELEMENT_FIRE && target->element == ELEMENT_GRASS) multiplier *= 2;
+    else if (attack_element == ELEMENT_GRASS && target->element == ELEMENT_WATER) multiplier *= 2;
+
+    if (attack_element == ELEMENT_ELECTRIC && target->buffs[BUFF_WET] > 0) {
+        multiplier *= 2;
+    }
+
+    (void)raw_damage;
+    return multiplier;
+}
+
+static void append_damage_report(ResolutionReport* report,
+                                 Character* target,
+                                 int raw_damage,
+                                 int element_bonus_damage,
+                                 int shield_absorbed,
+                                 int final_damage,
+                                 int hp_before,
+                                 int hp_after) {
+    if (!report || report->event_count >= MAX_RESOLUTION_EVENTS) return;
+
+    DamageResolutionEvent* event = &report->events[report->event_count++];
+    snprintf(event->target_name, sizeof(event->target_name), "%s", target->name);
+    event->raw_damage = raw_damage;
+    event->element_bonus_damage = element_bonus_damage;
+    event->shield_absorbed = shield_absorbed;
+    event->final_damage = final_damage;
+    event->hp_before = hp_before;
+    event->hp_after = hp_after;
+    event->has_damage = 1;
 }
 
 // ============================================================
@@ -96,12 +133,36 @@ void CommitDamageAndCheck(int final_damage, Character* target) {
 
 // 对单个目标执行伤害/护盾/治疗/Buff结算
 // 伤害和护盾仅对存活目标生效；治疗可作用于阵亡目标以触发复活
-static void resolve_on_target(Card* played_card, Character* attacker, Character* target_char) {
+static void resolve_on_target(Card* played_card, Character* attacker, Character* target_char, ResolutionReport* report) {
     // 伤害（仅存活目标）
     if (target_char->is_alive && played_card->base_damage > 0) {
+        int hp_before = target_char->hp;
+        int shield_before = target_char->buffs[BUFF_SHIELD];
         int raw = GetRawDamage(played_card, attacker);
-        int final_dmg = CalculateMitigation(raw, played_card->element, target_char);
+        int multiplier = get_element_multiplier(raw, played_card->element, target_char);
+        int boosted = raw * multiplier;
+        int base_without_element_after_shield = raw - shield_before;
+        int final_dmg;
+        int shield_absorbed;
+        int actual_damage;
+        int base_actual_damage;
+        if (base_without_element_after_shield < 0) base_without_element_after_shield = 0;
+        final_dmg = CalculateMitigation(raw, played_card->element, target_char);
         CommitDamageAndCheck(final_dmg, target_char);
+        shield_absorbed = boosted - final_dmg;
+        if (shield_absorbed < 0) shield_absorbed = 0;
+        actual_damage = hp_before - target_char->hp;
+        if (actual_damage < 0) actual_damage = 0;
+        base_actual_damage = base_without_element_after_shield;
+        if (base_actual_damage > hp_before) base_actual_damage = hp_before;
+        append_damage_report(report,
+                             target_char,
+                             raw,
+                             actual_damage - base_actual_damage,
+                             shield_absorbed,
+                             actual_damage,
+                             hp_before,
+                             target_char->hp);
     }
 
     // 护盾（仅存活目标）
@@ -123,7 +184,7 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
 }
 
 // 执行单个Action：切换角色 或 打出卡牌并完成数值结算
-static void apply_action(Player* acting_player, Player* target_player, Action action) {
+static void apply_action(Player* acting_player, Player* target_player, Action action, ResolutionReport* report) {
     // 切换出战角色
     if (action.type == ACTION_SWITCH_CHAR) {
         if (action.switch_to_idx >= 0 && action.switch_to_idx < TEAM_SIZE 
@@ -158,11 +219,11 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
     if (played_card.target_type == TARGET_ENEMY_ALL || played_card.target_type == TARGET_SELF_ALL) {
         Player* aoe_team = (played_card.target_type == TARGET_ENEMY_ALL) ? target_player : acting_player;
         for (int i = 0; i < TEAM_SIZE; i++) {
-            resolve_on_target(&played_card, active_char, &aoe_team->team[i]);
+            resolve_on_target(&played_card, active_char, &aoe_team->team[i], report);
         }
     } else {
         Character* target_char = resolve_target(acting_player, target_player, action.target_idx, played_card.target_type);
-        resolve_on_target(&played_card, active_char, target_char);
+        resolve_on_target(&played_card, active_char, target_char, report);
     }
 
     // 出手后卡牌移入弃牌堆
@@ -175,9 +236,16 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
 
 // 执行单个行动：acting_player_id为1或2，引擎在循环中多次调用直到能量耗尽或主动结束
 void ExecuteAction(GameState* state, Action* action, int acting_player_id) {
+    ExecuteActionWithReport(state, action, acting_player_id, NULL);
+}
+
+void ExecuteActionWithReport(GameState* state, Action* action, int acting_player_id, ResolutionReport* report) {
     Player* acting = (acting_player_id == 1) ? &state->p1 : &state->p2;
     Player* target = (acting_player_id == 1) ? &state->p2 : &state->p1;
-    apply_action(acting, target, *action);
+    if (report) {
+        memset(report, 0, sizeof(*report));
+    }
+    apply_action(acting, target, *action, report);
 }
 
 // 回合结束清理：Buff-1、能量回满、手牌补满、阵亡出战自动切换
