@@ -48,9 +48,11 @@ static int g_is_fullscreen = 1;
 static int g_is_quitting = 0;
 static int g_last_canvas_w = 0;
 static int g_last_canvas_h = 0;
+static int g_ui_layout_version = 0;
 
 static void draw_background_shell();
 static void present_frame();
+static int layout_changed_since(int* seen_version);
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -102,6 +104,7 @@ static void resize_canvas_for_mode(int width, int height) {
     g_last_canvas_h = height;
     invalidate_ui_assets();
     update_layout();
+    g_ui_layout_version++;
 }
 
 static void apply_window_mode(int fullscreen) {
@@ -117,8 +120,6 @@ static void apply_window_mode(int fullscreen) {
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         MoveWindow(hwnd, 0, 0, screen_w, screen_h, TRUE);
         resize_canvas_for_mode(screen_w, screen_h);
-        draw_background_shell();
-        present_frame();
         g_is_fullscreen = 1;
         return;
     }
@@ -138,8 +139,6 @@ static void apply_window_mode(int fullscreen) {
     ShowWindow(hwnd, SW_SHOWNORMAL);
     SetForegroundWindow(hwnd);
     resize_canvas_for_mode(client_w, client_h);
-    draw_background_shell();
-    present_frame();
     g_is_fullscreen = 0;
 }
 
@@ -306,9 +305,14 @@ static void drain_easyx_input() {
 
 static void wait_for_fresh_ack(const char* prompt) {
     draw_overlay_message(prompt);
+    int layout_version = g_ui_layout_version;
     drain_easyx_input();
     while (1) {
         handle_global_hotkeys();
+        if (layout_changed_since(&layout_version)) {
+            draw_background_shell();
+            draw_overlay_message(prompt);
+        }
         if (MouseHit()) {
             MOUSEMSG mm = GetMouseMsg();
             if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
@@ -336,6 +340,13 @@ static int poll_mouse_message(MOUSEMSG* out_msg) {
         return 0;
     }
     *out_msg = GetMouseMsg();
+    return 1;
+}
+
+static int layout_changed_since(int* seen_version) {
+    if (!seen_version) return 0;
+    if (*seen_version == g_ui_layout_version) return 0;
+    *seen_version = g_ui_layout_version;
     return 1;
 }
 
@@ -662,9 +673,14 @@ static void wait_for_enter(const char* prompt) {
 #ifdef USE_EASYX
     // Draw prompt in a bottom overlay so it doesn't overlap buttons
     draw_overlay_message(prompt);
+    int layout_version = g_ui_layout_version;
     // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
     while (1) {
         handle_global_hotkeys();
+        if (layout_changed_since(&layout_version)) {
+            draw_background_shell();
+            draw_overlay_message(prompt);
+        }
         // check for mouse clicks queued by EasyX
         if (MouseHit()) {
             MOUSEMSG mm = GetMouseMsg();
@@ -714,7 +730,9 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     char buf[256];
 
 #ifdef USE_EASYX
+action_menu:
     reset_draw_y();
+    int layout_version = g_ui_layout_version;
     // render side panel with HP so it's always visible
     draw_team_hp_panel(&state);
     snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
@@ -725,7 +743,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
 
     MOUSEMSG m;
     while (1) {
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) goto action_menu;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto action_menu;
         if (m.uMsg == WM_LBUTTONDOWN) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
@@ -743,7 +765,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 }
                 // 等待手牌点击
                 while (1) {
-                    if (!poll_mouse_message(&m)) continue;
+                    if (!poll_mouse_message(&m)) {
+                        if (layout_changed_since(&layout_version)) goto action_menu;
+                        continue;
+                    }
+                    if (layout_changed_since(&layout_version)) goto action_menu;
                     if (m.uMsg == WM_LBUTTONDOWN) {
                         for (int i = 0; i < p->hand_count; i++) {
                             int rx = hx, ry = hy + i * (hh + 8);
@@ -780,7 +806,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                         draw_button(tx, ty + t * (th + 8), tw, th, tb);
                                     }
                                     while (1) {
-                                        if (!poll_mouse_message(&m)) continue;
+                                        if (!poll_mouse_message(&m)) {
+                                            if (layout_changed_since(&layout_version)) goto action_menu;
+                                            continue;
+                                        }
+                                        if (layout_changed_since(&layout_version)) goto action_menu;
                                         if (m.uMsg == WM_LBUTTONDOWN) {
                                             for (int t = 0; t < TEAM_SIZE; t++) {
                                                 int rx2 = tx;
@@ -812,7 +842,11 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
                 }
                 while (1) {
-                    if (!poll_mouse_message(&m)) continue;
+                    if (!poll_mouse_message(&m)) {
+                        if (layout_changed_since(&layout_version)) goto action_menu;
+                        continue;
+                    }
+                    if (layout_changed_since(&layout_version)) goto action_menu;
                     if (m.uMsg == WM_LBUTTONDOWN) {
                         for (int i = 0; i < TEAM_SIZE; i++) {
                             int rx = sx, ry = sy + i * (sh + 8);
@@ -905,11 +939,13 @@ Action GetPlannedInputFromUI(int player_id, GameState state, const ActionRecord*
 #ifdef USE_EASYX
     Player* p = mutable_player(&state, player_id);
     MOUSEMSG m;
+    int layout_version = g_ui_layout_version;
     char buf[256];
 
 main_menu:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Plan your turn");
+    layout_version = g_ui_layout_version;
     {
         int bx = g_main_x + 24, by = g_draw_y + 10, bw = 220, bh = 44;
         draw_button(bx, by, bw, bh, "End Turn");
@@ -919,7 +955,11 @@ main_menu:
         if (can_edit) draw_button(bx, by + 165, bw, bh, "Edit Card");
         else draw_button_disabled(bx, by + 165, bw, bh, "Edit Action");
         while (1) {
-            if (!poll_mouse_message(&m)) continue;
+            if (!poll_mouse_message(&m)) {
+                if (layout_changed_since(&layout_version)) goto main_menu;
+                continue;
+            }
+            if (layout_changed_since(&layout_version)) goto main_menu;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) {
                 act.type = ACTION_END_TURN;
@@ -944,6 +984,7 @@ main_menu:
 card_select:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
+    layout_version = g_ui_layout_version;
     {
         int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 380, 620), ch = 40;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
@@ -957,7 +998,11 @@ card_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            if (!poll_mouse_message(&m)) continue;
+            if (!poll_mouse_message(&m)) {
+                if (layout_changed_since(&layout_version)) goto card_select;
+                continue;
+            }
+            if (layout_changed_since(&layout_version)) goto card_select;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -985,6 +1030,7 @@ card_select:
 target_select:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Choose a target");
+    layout_version = g_ui_layout_version;
     {
         Card* c = &p->hand[act.card_hand_idx];
         Character* target_team = NULL;
@@ -1004,7 +1050,11 @@ target_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            if (!poll_mouse_message(&m)) continue;
+            if (!poll_mouse_message(&m)) {
+                if (layout_changed_since(&layout_version)) goto target_select;
+                continue;
+            }
+            if (layout_changed_since(&layout_version)) goto target_select;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -1026,6 +1076,7 @@ target_select:
 switch_select:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
+    layout_version = g_ui_layout_version;
     {
         int sx = g_main_x + 48, sy = g_draw_y + 20, sw = clamp_int(g_main_w - 96, 360, 620), sh = 50;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
@@ -1036,7 +1087,11 @@ switch_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            if (!poll_mouse_message(&m)) continue;
+            if (!poll_mouse_message(&m)) {
+                if (layout_changed_since(&layout_version)) goto switch_select;
+                continue;
+            }
+            if (layout_changed_since(&layout_version)) goto switch_select;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -1059,6 +1114,7 @@ switch_select:
 
 edit_select:
     draw_planning_shell(&state, player_id, records, record_count, "Edit an action");
+    layout_version = g_ui_layout_version;
     {
         int ex = g_main_x + 24, ey = g_draw_y + 10, ew = clamp_int(g_main_w - 64, 420, 700), eh = 40;
         int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
@@ -1073,7 +1129,11 @@ edit_select:
         }
         draw_button(back_x, back_y, back_w, back_h, "Back");
         while (1) {
-            if (!poll_mouse_message(&m)) continue;
+            if (!poll_mouse_message(&m)) {
+                if (layout_changed_since(&layout_version)) goto edit_select;
+                continue;
+            }
+            if (layout_changed_since(&layout_version)) goto edit_select;
             if (m.uMsg != WM_LBUTTONDOWN) continue;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) {
                 reset_pending_action(&act, player_id);
@@ -1163,7 +1223,9 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX
     // legacy single-select preserved for compatibility
+single_character_select:
     reset_draw_y();
+    int layout_version = g_ui_layout_version;
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
@@ -1185,7 +1247,11 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
             need_redraw = 0;
         }
 
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) goto single_character_select;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto single_character_select;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
@@ -1228,7 +1294,9 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
 // New: multi-select characters at once. Returns number selected (0 = none). Fills out_indices and out_count.
 int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
+multi_character_select:
     reset_draw_y();
+    int layout_version = g_ui_layout_version;
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
     int sx = g_main_x + 24, sy = g_draw_y + 10, sw = clamp_int(g_main_w - 64, 360, 620), sh = 40;
@@ -1250,7 +1318,17 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
             need_redraw = 0;
         }
 
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) {
+                free(selected);
+                goto multi_character_select;
+            }
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) {
+            free(selected);
+            goto multi_character_select;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
@@ -1286,7 +1364,9 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
 int SelectCardFromUI(int player_id, int current_deck_size) {
 #ifdef USE_EASYX
     // legacy single-select behavior preserved for compatibility
+single_card_select:
     reset_draw_y();
+    int layout_version = g_ui_layout_version;
     char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
     int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 340, 620), ch = 40;
@@ -1313,7 +1393,11 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
             need_redraw = 0;
         }
 
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) goto single_card_select;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto single_card_select;
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
@@ -1362,7 +1446,9 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 // New: allow selecting multiple cards at once; returns number of selected indices (0 = none), fills out_indices and sets out_count
 int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count) {
 #ifdef USE_EASYX
+multi_card_select:
     reset_draw_y();
+    int layout_version = g_ui_layout_version;
     char buf[256]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Deck Building (max %d cards)", player_id, max_select); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
     int show = g_card_count < 8 ? g_card_count : 8; // limit UI to 8 unique card types per spec
@@ -1400,7 +1486,17 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
             need_redraw = 0;
         }
 
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) {
+                free(qty);
+                goto multi_card_select;
+            }
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) {
+            free(qty);
+            goto multi_card_select;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
@@ -1477,7 +1573,9 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 
 int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
+mode_menu:
     reset_draw_y(); draw_line("Main Menu: Select mode:");
+    int layout_version = g_ui_layout_version;
     int bx = g_main_x + 52, by = g_draw_y + 10, bw = 280, bh = 64;
     int confirm_x = bx, confirm_y = by + 200; // place confirm below options
     int selected_mode = -1;
@@ -1490,7 +1588,11 @@ int GetModeSelectionFromUI() {
         else draw_button(bx, by + 90, bw, bh, "AI PvE");
         draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
 
-        if (!poll_mouse_message(&m)) continue;
+        if (!poll_mouse_message(&m)) {
+            if (layout_changed_since(&layout_version)) goto mode_menu;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto mode_menu;
         if (m.uMsg == WM_LBUTTONDOWN) {
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; }
             else if (point_in_rect(m.x, m.y, bx, by + 90, bw, bh)) { selected_mode = MODE_PVE; }
