@@ -30,22 +30,72 @@ static IMAGE g_art_portrait_fire;
 static IMAGE g_art_portrait_grass;
 static IMAGE g_art_portrait_electric;
 static int g_ui_assets_ready = 0;
+static int g_ui_w = 1280;
+static int g_ui_h = 720;
+static int g_ui_margin = 24;
+static int g_status_h = 44;
+static int g_main_x = 24;
+static int g_main_y = 60;
+static int g_main_w = 820;
+static int g_main_h = 580;
+static int g_side_x = 900;
+static int g_side_w = 356;
+static int g_team_panel_y = 60;
+static int g_team_panel_h = 300;
+static int g_records_panel_y = 376;
+static int g_records_panel_h = 260;
+
+static int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static void update_layout() {
+    int w = getwidth();
+    int h = getheight();
+    if (w <= 0) w = 1280;
+    if (h <= 0) h = 720;
+
+    g_ui_w = w;
+    g_ui_h = h;
+    g_ui_margin = clamp_int(w / 70, 18, 32);
+    g_status_h = clamp_int(h / 22, 40, 52);
+    g_main_x = g_ui_margin;
+    g_main_y = g_status_h + g_ui_margin;
+    g_side_w = clamp_int(w / 4, 340, 460);
+    g_side_x = w - g_side_w - g_ui_margin;
+    g_main_w = g_side_x - g_main_x - g_ui_margin;
+    if (g_main_w < 520) g_main_w = w - (g_ui_margin * 2);
+    g_main_h = h - g_main_y - 86;
+    if (g_main_h < 420) g_main_h = h - g_main_y - 58;
+    g_team_panel_y = g_main_y;
+    g_team_panel_h = 304;
+    g_records_panel_y = g_team_panel_y + g_team_panel_h + g_ui_margin;
+    g_records_panel_h = h - g_records_panel_y - 86;
+    if (g_records_panel_h < 220) g_records_panel_h = 220;
+}
+
+static int bottom_button_y() {
+    return g_ui_h - g_ui_margin - 96;
+}
 
 static void load_ui_assets() {
     if (g_ui_assets_ready) return;
-    loadimage(&g_art_background, "assets\\ui\\battle_background.bmp", 800, 600, true);
-    loadimage(&g_art_main_panel, "assets\\ui\\main_panel.bmp", 452, 520, true);
-    loadimage(&g_art_status_panel, "assets\\ui\\status_panel.bmp", 800, 36, true);
-    loadimage(&g_art_side_panel, "assets\\ui\\side_panel.bmp", 294, 208, true);
-    loadimage(&g_art_records_panel, "assets\\ui\\records_panel.bmp", 285, 260, true);
-    loadimage(&g_art_message_panel, "assets\\ui\\message_panel.bmp", 760, 40, true);
+    update_layout();
+    loadimage(&g_art_background, "assets\\ui\\battle_background.bmp", g_ui_w, g_ui_h, true);
+    loadimage(&g_art_main_panel, "assets\\ui\\main_panel.bmp", g_main_w, g_main_h, true);
+    loadimage(&g_art_status_panel, "assets\\ui\\status_panel.bmp", g_ui_w, g_status_h, true);
+    loadimage(&g_art_side_panel, "assets\\ui\\side_panel.bmp", g_side_w, g_team_panel_h, true);
+    loadimage(&g_art_records_panel, "assets\\ui\\records_panel.bmp", g_side_w, g_records_panel_h, true);
+    loadimage(&g_art_message_panel, "assets\\ui\\message_panel.bmp", g_ui_w - (g_ui_margin * 2), 46, true);
     loadimage(&g_art_button_idle, "assets\\ui\\button_idle.bmp", 420, 60, true);
     loadimage(&g_art_button_selected, "assets\\ui\\button_selected.bmp", 420, 60, true);
     loadimage(&g_art_button_disabled, "assets\\ui\\button_disabled.bmp", 420, 60, true);
-    loadimage(&g_art_hp_fill, "assets\\ui\\hp_bar_fill.bmp", 180, 10, true);
-    loadimage(&g_art_energy_fill, "assets\\ui\\energy_bar_fill.bmp", 180, 10, true);
-    loadimage(&g_art_bar_frame, "assets\\ui\\bar_frame.bmp", 184, 14, true);
-    loadimage(&g_art_card_plate, "assets\\ui\\card_plate.bmp", 420, 72, true);
+    loadimage(&g_art_hp_fill, "assets\\ui\\hp_bar_fill.bmp", 360, 10, true);
+    loadimage(&g_art_energy_fill, "assets\\ui\\energy_bar_fill.bmp", 360, 10, true);
+    loadimage(&g_art_bar_frame, "assets\\ui\\bar_frame.bmp", 364, 14, true);
+    loadimage(&g_art_card_plate, "assets\\ui\\card_plate.bmp", 900, 72, true);
     loadimage(&g_art_portrait_normal, "assets\\ui\\portrait_normal.bmp", 32, 32, true);
     loadimage(&g_art_portrait_water, "assets\\ui\\portrait_water.bmp", 32, 32, true);
     loadimage(&g_art_portrait_fire, "assets\\ui\\portrait_fire.bmp", 32, 32, true);
@@ -76,12 +126,14 @@ static IMAGE* portrait_for_element(ElementType element) {
 
 static void draw_background_shell() {
     load_ui_assets();
-    draw_art_or_fill(&g_art_background, 0, 0, 800, 600, RGB(37, 46, 54));
-    draw_art_or_fill(&g_art_main_panel, 8, 8, 452, 520, RGB(238, 231, 201));
+    update_layout();
+    draw_art_or_fill(&g_art_background, 0, 0, g_ui_w, g_ui_h, RGB(37, 46, 54));
+    draw_art_or_fill(&g_art_main_panel, g_main_x, g_main_y, g_main_w, g_main_h, RGB(238, 231, 201));
 }
 
 static void reset_draw_y() {
-    g_draw_y = 10;
+    update_layout();
+    g_draw_y = g_main_y + 14;
     setbkcolor(RGB(238, 231, 201));
     settextcolor(RGB(31, 37, 41));
     cleardevice();
@@ -113,7 +165,7 @@ static void settextstyle_utf8(int height, int width, const char* utf8Name) {
     std::string s = utf8_to_acp_str(utf8Name);
     settextstyle(height, width, s.c_str());
 }
-static void draw_line(const char* s) { outtextxy_utf8(10, g_draw_y, s); g_draw_y += 24; }
+static void draw_line(const char* s) { outtextxy_utf8(g_main_x + 16, g_draw_y, s); g_draw_y += 26; }
 #ifdef USE_EASYX
 static void draw_overlay_message(const char* utf8msg);
 
@@ -123,20 +175,21 @@ static void present_frame() {
 
 static void draw_status_bar(const GameState* st, int acting_player_id, const char* phase) {
     if (!st) return;
+    update_layout();
     char buf[256];
-    draw_art_or_fill(&g_art_status_panel, 0, 0, 800, 36, RGB(238, 244, 252));
+    draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
-    rectangle(0, 0, 799, 36);
+    rectangle(0, 0, g_ui_w - 1, g_status_h);
     settextcolor(RGB(26, 36, 45));
     snprintf(buf, sizeof(buf), "Round %d", st->round_count);
-    outtextxy_utf8(16, 9, buf);
+    outtextxy_utf8(g_ui_margin, 12, buf);
     snprintf(buf, sizeof(buf), "Acting Player: P%d", acting_player_id > 0 ? acting_player_id : st->current_turn);
-    outtextxy_utf8(150, 9, buf);
+    outtextxy_utf8(g_ui_margin + 150, 12, buf);
     if (phase && phase[0] != '\0') {
         snprintf(buf, sizeof(buf), "Phase: %s", phase);
-        outtextxy_utf8(340, 9, buf);
+        outtextxy_utf8(g_ui_margin + 350, 12, buf);
     }
-    g_draw_y = 46;
+    g_draw_y = g_main_y + 14;
 }
 
 static void drain_easyx_input() {
@@ -214,7 +267,8 @@ static void draw_button_with_check(int x, int y, int w, int h, const char* label
 // overlapping interactive UI elements (buttons, lists).
 static void draw_overlay_message(const char* utf8msg) {
     std::string s = utf8_to_acp_str(utf8msg);
-    int x = 20, w = 760, h = 40, y = 540; // bottom area for messages
+    update_layout();
+    int x = g_ui_margin, w = g_ui_w - (g_ui_margin * 2), h = 46, y = g_ui_h - g_ui_margin - h; // bottom area for messages
     draw_art_or_fill(&g_art_message_panel, x, y, w, h, RGB(246, 242, 222));
     setlinecolor(RGB(65, 56, 43));
     rectangle(x, y, x + w, y + h);
@@ -260,25 +314,26 @@ static void draw_character_hud_row(const Character* ch, int x, int y, const char
     outtextxy_utf8(x + 40, y, buf);
     snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
     outtextxy_utf8(x + 40, y + 17, buf);
-    draw_meter(x + 134, y + 17, 128, ch->hp, ch->max_hp, &g_art_hp_fill);
+    draw_meter(x + 134, y + 17, g_side_w - 162, ch->hp, ch->max_hp, &g_art_hp_fill);
 }
 
 // Render both teams' characters and HP on a side panel (right side) so that
 // their HP is always visible during the turn.
 static void draw_team_hp_panel(const GameState* st) {
     if (!st) return;
-    int x = 480, y = 48; // shifted left slightly to avoid overflow and status bar
+    update_layout();
+    int x = g_side_x + 10, y = g_team_panel_y + 10;
     char buf[128];
-    draw_art_or_fill(&g_art_side_panel, x - 8, y - 4, 294, 208, RGB(242, 239, 220));
+    draw_art_or_fill(&g_art_side_panel, g_side_x, g_team_panel_y, g_side_w, g_team_panel_h, RGB(242, 239, 220));
     setlinecolor(RGB(62, 76, 92));
-    rectangle(x - 8, y - 4, x - 8 + 294, y - 4 + 208);
+    rectangle(g_side_x, g_team_panel_y, g_side_x + g_side_w, g_team_panel_y + g_team_panel_h);
     settextcolor(RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
     outtextxy_utf8(x + 6, y, buf); y += 22;
     for (int i = 0; i < TEAM_SIZE; i++) {
         snprintf(buf, sizeof(buf), "P1[%d]", i);
         draw_character_hud_row(&st->p1.team[i], x + 6, y, buf);
-        y += 32;
+        y += 38;
     }
     y += 6;
     snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
@@ -286,7 +341,7 @@ static void draw_team_hp_panel(const GameState* st) {
     for (int i = 0; i < TEAM_SIZE; i++) {
         snprintf(buf, sizeof(buf), "P2[%d]", i);
         draw_character_hud_row(&st->p2.team[i], x + 6, y, buf);
-        y += 32;
+        y += 38;
     }
 }
 
@@ -305,7 +360,8 @@ static Player* mutable_player(GameState* st, int player_id) {
 }
 
 static void draw_action_records_panel(const ActionRecord* records, int record_count, int player_id) {
-    int x = 480, y = 260, w = 285, h = 260;
+    update_layout();
+    int x = g_side_x, y = g_records_panel_y, w = g_side_w, h = g_records_panel_h;
     char buf[256];
     int shown = 0;
     draw_art_or_fill(&g_art_records_panel, x, y, w, h, RGB(230, 234, 230));
@@ -353,7 +409,7 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
     draw_line(buf);
     snprintf(buf, sizeof(buf), "Energy: %d/%d", p->energy, p->max_energy);
     draw_line(buf);
-    draw_meter(118, g_draw_y - 22, 184, p->energy, p->max_energy, &g_art_energy_fill);
+    draw_meter(g_main_x + 124, g_draw_y - 24, 220, p->energy, p->max_energy, &g_art_energy_fill);
     draw_line("Active:");
     print_character(&p->team[p->active_idx]);
     present_frame();
@@ -368,7 +424,16 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
 
 void InitGUI() {
 #ifdef USE_EASYX
-    initgraph(800,600);
+    SetProcessDPIAware();
+    int screen_w = GetSystemMetrics(SM_CXSCREEN);
+    int screen_h = GetSystemMetrics(SM_CYSCREEN);
+    if (screen_w < 1024) screen_w = 1024;
+    if (screen_h < 720) screen_h = 720;
+    HWND hwnd = initgraph(screen_w, screen_h);
+    if (hwnd) {
+        SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screen_w, screen_h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
     BeginBatchDraw();
     load_ui_assets();
     setbkcolor(RGB(238, 231, 201));
@@ -398,17 +463,18 @@ void print_character(const Character* ch) {
 #ifdef USE_EASYX
     char buf[256];
     int y = g_draw_y;
+    int x = g_main_x + 16;
     IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, 10, y, 32, 32, RGB(167, 158, 139));
+    draw_art_or_fill(portrait, x, y, 38, 38, RGB(167, 158, 139));
     setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
-    rectangle(10, y, 42, y + 32);
+    rectangle(x, y, x + 38, y + 38);
     snprintf(buf, sizeof(buf), "%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s",
              ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
              ch->is_alive ? "" : "[DEAD]");
     settextcolor(RGB(27, 33, 35));
-    outtextxy_utf8(50, y + 1, buf);
-    draw_meter(50, y + 22, 184, ch->hp, ch->max_hp, &g_art_hp_fill);
-    g_draw_y += 40;
+    outtextxy_utf8(x + 48, y + 2, buf);
+    draw_meter(x + 48, y + 24, 240, ch->hp, ch->max_hp, &g_art_hp_fill);
+    g_draw_y += 46;
 #else
     printf("%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s\n",
            ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
@@ -421,14 +487,17 @@ void print_card(const Card* c, int idx) {
 #ifdef USE_EASYX
     char buf[256];
     int y = g_draw_y;
-    draw_art_or_fill(&g_art_card_plate, 10, y, 420, 34, RGB(222, 215, 184));
+    int x = g_main_x + 16;
+    int w = g_main_w - 32;
+    if (w > 700) w = 700;
+    draw_art_or_fill(&g_art_card_plate, x, y, w, 38, RGB(222, 215, 184));
     setlinecolor(RGB(83, 72, 55));
-    rectangle(10, y, 430, y + 34);
+    rectangle(x, y, x + w, y + 38);
     snprintf(buf, sizeof(buf), " [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d",
              idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
     settextcolor(RGB(29, 31, 30));
-    outtextxy_utf8(18, y + 7, buf);
-    g_draw_y += 38;
+    outtextxy_utf8(x + 8, y + 9, buf);
+    g_draw_y += 42;
 #else
     printf(" [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d\n",
            idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
@@ -447,7 +516,7 @@ void RenderGameBoard(GameState state) {
     snprintf(buf,sizeof(buf), "-- Player1: %s --", state.p1.name); draw_line(buf);
     draw_line(" Active: "); print_character(&state.p1.team[state.p1.active_idx]);
     snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p1.energy, state.p1.max_energy, state.p1.hand_count, state.p1.draw_count, state.p1.discard_count); draw_line(buf);
-    draw_meter(118, g_draw_y - 22, 184, state.p1.energy, state.p1.max_energy, &g_art_energy_fill);
+    draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p1.energy, state.p1.max_energy, &g_art_energy_fill);
     if (state.p1.hand_count > 0) {
         draw_line(" Hand:");
         for (int i = 0; i < state.p1.hand_count; i++) {
@@ -458,7 +527,7 @@ void RenderGameBoard(GameState state) {
     snprintf(buf,sizeof(buf), "\n-- Player2: %s --", state.p2.name); draw_line(buf);
     draw_line(" Active: "); print_character(&state.p2.team[state.p2.active_idx]);
     snprintf(buf,sizeof(buf), " Energy: %d/%d  Hand:%d  Draw:%d Discard:%d", state.p2.energy, state.p2.max_energy, state.p2.hand_count, state.p2.draw_count, state.p2.discard_count); draw_line(buf);
-    draw_meter(118, g_draw_y - 22, 184, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
+    draw_meter(g_main_x + 124, g_draw_y - 24, 220, state.p2.energy, state.p2.max_energy, &g_art_energy_fill);
     if (state.p2.hand_count > 0) {
         draw_line(" Hand:");
         for (int i = 0; i < state.p2.hand_count; i++) {
@@ -554,7 +623,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
     // render side panel with HP so it's always visible
     draw_team_hp_panel(&state);
     snprintf(buf, sizeof(buf), "Player %d's turn - Please choose action:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
-    int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
+    int bx = g_main_x + 24, by = g_draw_y + 10, bw = 220, bh = 44;
     draw_button(bx, by, bw, bh, "End Turn");
     draw_button(bx, by + 60, bw, bh, "Play Card");
     draw_button(bx, by + 120, bw, bh, "Switch Character");
@@ -572,7 +641,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
                 // show current active character info
                 draw_line(" Active: "); print_character(&p->team[p->active_idx]);
-                int hx = 160, hy = g_draw_y + 10, hw = 220, hh = 40;
+                int hx = g_main_x + 180, hy = g_draw_y + 10, hw = 280, hh = 44;
                 for (int i = 0; i < p->hand_count; i++) {
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
@@ -603,7 +672,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
                                     // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
-                                    int tx = 540, ty = 230, tw = 220, th = 40;
+                                    int tx = g_side_x + 24, ty = g_team_panel_y + g_team_panel_h + 24, tw = g_side_w - 48, th = 44;
                                     Character* target_team = NULL;
                                     if (c->target_type == TARGET_SELF_SINGLE) target_team = p->team;
                                     else {
@@ -642,7 +711,7 @@ Action GetHumanInputFromUI(int player_id, GameState state) {
                 reset_draw_y();
                 draw_team_hp_panel(&state);
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
-                int sx = 120, sy = g_draw_y + 10, sw = 320, sh = 48;
+                int sx = g_main_x + 120, sy = g_draw_y + 10, sw = 380, sh = 50;
                 for (int i = 0; i < TEAM_SIZE; i++) {
                     char tmp[128]; snprintf(tmp, sizeof(tmp), "[%d] %s", i, p->team[i].name);
                     draw_button(sx, sy + i * (sh + 8), sw, sh, tmp);
@@ -747,7 +816,7 @@ main_menu:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Plan your turn");
     {
-        int bx = 30, by = g_draw_y + 10, bw = 200, bh = 40;
+        int bx = g_main_x + 24, by = g_draw_y + 10, bw = 220, bh = 44;
         draw_button(bx, by, bw, bh, "End Turn");
         draw_button(bx, by + 55, bw, bh, "Play Card");
         draw_button(bx, by + 110, bw, bh, "Switch Character");
@@ -781,8 +850,8 @@ card_select:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
     {
-        int cx = 30, cy = g_draw_y + 10, cw = 380, ch = 36;
-        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 380, 620), ch = 40;
+        int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         for (int i = 0; i < p->hand_count; i++) {
             snprintf(buf, sizeof(buf), "[%d] %s  Cost:%d", i, p->hand[i].name, p->hand[i].energy_cost);
             if (p->energy >= p->hand[i].energy_cost) {
@@ -831,8 +900,8 @@ target_select:
         }
         snprintf(buf, sizeof(buf), "Card: %s", c->name);
         draw_line(buf);
-        int tx = 60, ty = g_draw_y + 20, tw = 340, th = 42;
-        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        int tx = g_main_x + 48, ty = g_draw_y + 20, tw = clamp_int(g_main_w - 96, 360, 620), th = 46;
+        int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         for (int t = 0; t < TEAM_SIZE; t++) {
             snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", t, target_team[t].name, target_team[t].hp, target_team[t].max_hp);
             if (target_team[t].is_alive || c->target_type == TARGET_SELF_SINGLE) draw_button(tx, ty + t * (th + 8), tw, th, buf);
@@ -863,8 +932,8 @@ switch_select:
     p = mutable_player(&state, player_id);
     draw_planning_shell(&state, player_id, records, record_count, "Choose active character");
     {
-        int sx = 60, sy = g_draw_y + 20, sw = 340, sh = 46;
-        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        int sx = g_main_x + 48, sy = g_draw_y + 20, sw = clamp_int(g_main_w - 96, 360, 620), sh = 50;
+        int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         for (int i = 0; i < TEAM_SIZE; i++) {
             snprintf(buf, sizeof(buf), "[%d] %s HP:%d/%d", i, p->team[i].name, p->team[i].hp, p->team[i].max_hp);
             if (p->team[i].is_alive) draw_button(sx, sy + i * (sh + 8), sw, sh, buf);
@@ -896,8 +965,8 @@ switch_select:
 edit_select:
     draw_planning_shell(&state, player_id, records, record_count, "Edit an action");
     {
-        int ex = 30, ey = g_draw_y + 10, ew = 420, eh = 36;
-        int back_x = 30, back_y = 540, back_w = 120, back_h = 38;
+        int ex = g_main_x + 24, ey = g_draw_y + 10, ew = clamp_int(g_main_w - 64, 420, 700), eh = 40;
+        int back_x = g_main_x + 16, back_y = bottom_button_y(), back_w = 120, back_h = 38;
         int display_to_record[MAX_TURN_ACTIONS];
         int display_count = 0;
         for (int i = 0; i < record_count && i < MAX_TURN_ACTIONS; i++) {
@@ -1003,7 +1072,7 @@ int SelectCharacterFromUI(int player_id, int slot_number) {
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
     // Draw clickable list but keep selection until confirmed
-    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
+    int sx = g_main_x + 24, sy = g_draw_y + 10, sw = clamp_int(g_main_w - 64, 360, 620), sh = 40;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
@@ -1067,7 +1136,7 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting - choose up to %d", player_id, max_select); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int sx = 30, sy = g_draw_y + 10, sw = 360, sh = 36;
+    int sx = g_main_x + 24, sy = g_draw_y + 10, sw = clamp_int(g_main_w - 64, 360, 620), sh = 40;
     int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10;
     int* selected = (int*)malloc(sizeof(int) * g_char_count);
     memset(selected, 0, sizeof(int) * g_char_count);
@@ -1125,8 +1194,11 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
     reset_draw_y();
     char buf[128]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Selected %d so far", player_id, current_deck_size); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
-    int show = g_card_count < 20 ? g_card_count : 20;
-    int cx = 30, cy = g_draw_y + 10, cw = 340, ch = 36;
+    int cx = g_main_x + 24, cy = g_draw_y + 10, cw = clamp_int(g_main_w - 64, 340, 620), ch = 40;
+    int max_rows = (bottom_button_y() - cy - 80) / (ch + 6);
+    if (max_rows < 4) max_rows = 4;
+    if (max_rows > 20) max_rows = 20;
+    int show = g_card_count < max_rows ? g_card_count : max_rows;
     int confirm_x = cx, confirm_y = cy + show * (ch + 6) + 10; // place confirm below list
     int selected_idx = -1;
     MOUSEMSG m;
@@ -1199,7 +1271,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
     char buf[256]; snprintf(buf, sizeof(buf), "[Deck Build] Player %d - Deck Building (max %d cards)", player_id, max_select); draw_line(buf);
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
     int show = g_card_count < 8 ? g_card_count : 8; // limit UI to 8 unique card types per spec
-    int cx = 30, cy = g_draw_y + 10, card_w = 300, card_h = 36;
+    int cx = g_main_x + 24, cy = g_draw_y + 10, card_w = clamp_int(g_main_w - 250, 300, 560), card_h = 40;
     int minus_w = 40, qty_w = 60, plus_w = 40;
     int line_h = card_h + 6;
     int confirm_x = cx, confirm_y = cy + show * line_h + 60;
@@ -1311,7 +1383,7 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 int GetModeSelectionFromUI() {
 #ifdef USE_EASYX
     reset_draw_y(); draw_line("Main Menu: Select mode:");
-    int bx = 60, by = g_draw_y + 10, bw = 240, bh = 60;
+    int bx = g_main_x + 52, by = g_draw_y + 10, bw = 280, bh = 64;
     int confirm_x = bx, confirm_y = by + 200; // place confirm below options
     int selected_mode = -1;
     MOUSEMSG m;
