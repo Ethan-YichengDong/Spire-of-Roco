@@ -1560,49 +1560,59 @@ edit_select:
 
 void ShowResolutionStep(GameState state, const ActionRecord* record, const ResolutionReport* report, int step_number, int step_total) {
 #ifdef USE_EASYX
+    begin_deferred_present();
     reset_draw_y();
     draw_status_bar(&state, record ? record->player_id : state.current_turn, "Resolution");
     draw_team_hp_panel(&state);
     char buf[256];
     snprintf(buf, sizeof(buf), "Round Resolution  %d/%d", step_number, step_total);
-    draw_line(buf);
+    draw_section_title(g_main_x + 16, g_draw_y, buf);
+    g_draw_y += 34;
     if (record) {
         snprintf(buf, sizeof(buf), "Resolving: %s", record->summary);
-        draw_line(buf);
+        draw_soft_panel(g_main_x + 16, g_draw_y, clamp_int(g_main_w - 48, 420, 760), 46, RGB(238, 232, 204), RGB(85, 74, 56));
+        settextcolor(RGB(27, 33, 35));
+        outtextxy_clipped_utf8(g_main_x + 30, g_draw_y + 14, clamp_int(g_main_w - 76, 360, 700), buf);
+        g_draw_y += 58;
     } else {
         draw_line("Resolving: No actions to resolve");
     }
-    draw_line("Current battle state:");
-    snprintf(buf, sizeof(buf), "P1 Active: %s HP:%d/%d  Energy:%d/%d",
-             state.p1.team[state.p1.active_idx].name,
-             state.p1.team[state.p1.active_idx].hp,
-             state.p1.team[state.p1.active_idx].max_hp,
-             state.p1.energy, state.p1.max_energy);
-    draw_line(buf);
-    snprintf(buf, sizeof(buf), "P2 Active: %s HP:%d/%d  Energy:%d/%d",
-             state.p2.team[state.p2.active_idx].name,
-             state.p2.team[state.p2.active_idx].hp,
-             state.p2.team[state.p2.active_idx].max_hp,
-             state.p2.energy, state.p2.max_energy);
-    draw_line(buf);
+    draw_line("Active characters");
+    int active_w = clamp_int((g_main_w - 56) / 2, 260, 380);
+    int active_y = g_draw_y;
+    draw_character_option_panel(&state.p1.team[state.p1.active_idx], state.p1.active_idx, g_main_x + 16, active_y, active_w, 58, 1, 0, !state.p1.team[state.p1.active_idx].is_alive);
+    draw_character_option_panel(&state.p2.team[state.p2.active_idx], state.p2.active_idx, g_main_x + 28 + active_w, active_y, active_w, 58, 1, 0, !state.p2.team[state.p2.active_idx].is_alive);
+    g_draw_y += 72;
     if (report && report->event_count > 0) {
-        draw_line("Damage details:");
+        draw_line("Resolution events");
         for (int i = 0; i < report->event_count; i++) {
             const DamageResolutionEvent* event = &report->events[i];
             if (!event->has_damage) continue;
-            snprintf(buf, sizeof(buf), "%s: %d -> %d  Damage:%d  Element:+%d  Shield:%d",
+            int panel_w = clamp_int(g_main_w - 48, 420, 760);
+            int panel_h = 48;
+            COLORREF border = event->final_damage > 0 ? RGB(170, 68, 58) : RGB(52, 150, 99);
+            draw_soft_panel(g_main_x + 16, g_draw_y, panel_w, panel_h, RGB(239, 232, 210), border);
+            setfillcolor(border);
+            fillrectangle(g_main_x + 16, g_draw_y, g_main_x + 24, g_draw_y + panel_h);
+            snprintf(buf, sizeof(buf), "%s  HP %d -> %d",
                      event->target_name,
                      event->hp_before,
-                     event->hp_after,
+                     event->hp_after);
+            settextcolor(RGB(27, 33, 35));
+            outtextxy_clipped_utf8(g_main_x + 34, g_draw_y + 7, panel_w - 48, buf);
+            snprintf(buf, sizeof(buf), "Damage %d   Element +%d   Shield %d",
                      event->final_damage,
                      event->element_bonus_damage,
                      event->shield_absorbed);
-            draw_line(buf);
+            settextcolor(RGB(84, 76, 62));
+            outtextxy_clipped_utf8(g_main_x + 34, g_draw_y + 27, panel_w - 48, buf);
+            g_draw_y += panel_h + UI_GAP;
         }
     } else {
         draw_line("Damage details: no damage");
     }
-    present_frame();
+    draw_overlay_message_kind("Click or press any key to continue.", UI_MSG_CONFIRM);
+    end_deferred_present();
     wait_for_fresh_ack("Click or press any key to continue...");
 #else
     printf("[Resolution %d/%d] %s\n", step_number, step_total, record ? record->summary : "");
