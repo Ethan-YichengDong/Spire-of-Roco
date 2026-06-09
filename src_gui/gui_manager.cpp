@@ -8,6 +8,13 @@
 #include <conio.h>
 #include <windows.h>
 #include <string>
+
+#define UI_PAD 12
+#define UI_GAP 8
+#define UI_CARD_H 74
+#define UI_BUTTON_H 44
+#define UI_MESSAGE_HISTORY 3
+
 static int g_draw_y = 10;
 void print_character(const Character* ch);
 
@@ -50,6 +57,8 @@ static int g_last_canvas_w = 0;
 static int g_last_canvas_h = 0;
 static int g_ui_layout_version = 0;
 static int g_defer_present = 0;
+static char g_message_history[UI_MESSAGE_HISTORY][160] = { {0}, {0}, {0} };
+static int g_message_count = 0;
 
 static void draw_background_shell();
 static void present_frame();
@@ -242,6 +251,17 @@ static void outtextxy_utf8(int x, int y, const char* utf8) {
     std::string s = utf8_to_acp_str(utf8);
     outtextxy(x, y, s.c_str());
 }
+static void outtextxy_clipped_utf8(int x, int y, int max_w, const char* utf8) {
+    std::string s = utf8_to_acp_str(utf8);
+    if (max_w <= 0) return;
+    if (textwidth(s.c_str()) > max_w) {
+        while (s.size() > 3 && textwidth((s + "...").c_str()) > max_w) {
+            s.erase(s.size() - 1);
+        }
+        s += "...";
+    }
+    outtextxy(x, y, s.c_str());
+}
 static void settextstyle_utf8(int height, int width, const char* utf8Name) {
     std::string s = utf8_to_acp_str(utf8Name);
     settextstyle(height, width, s.c_str());
@@ -249,6 +269,87 @@ static void settextstyle_utf8(int height, int width, const char* utf8Name) {
 static void draw_line(const char* s) { outtextxy_utf8(g_main_x + 16, g_draw_y, s); g_draw_y += 26; }
 #ifdef USE_EASYX
 static void draw_overlay_message(const char* utf8msg);
+
+typedef enum {
+    UI_MSG_HINT = 0,
+    UI_MSG_CONFIRM,
+    UI_MSG_ERROR
+} UiMessageKind;
+
+static COLORREF element_color(ElementType element) {
+    switch (element) {
+        case ELEMENT_WATER: return RGB(64, 140, 210);
+        case ELEMENT_FIRE: return RGB(205, 82, 55);
+        case ELEMENT_GRASS: return RGB(84, 151, 86);
+        case ELEMENT_ELECTRIC: return RGB(213, 164, 47);
+        case ELEMENT_NORMAL:
+        default: return RGB(126, 124, 115);
+    }
+}
+
+static const char* element_label(ElementType element) {
+    switch (element) {
+        case ELEMENT_WATER: return "Water";
+        case ELEMENT_FIRE: return "Fire";
+        case ELEMENT_GRASS: return "Grass";
+        case ELEMENT_ELECTRIC: return "Electric";
+        case ELEMENT_NORMAL:
+        default: return "Normal";
+    }
+}
+
+static const char* card_type_label(CardType type) {
+    switch (type) {
+        case CARD_TYPE_ATTACK: return "Attack";
+        case CARD_TYPE_SKILL: return "Skill";
+        case CARD_TYPE_POWER: return "Power";
+        default: return "Card";
+    }
+}
+
+static const char* target_type_label(TargetType target) {
+    switch (target) {
+        case TARGET_ENEMY_SINGLE: return "Enemy";
+        case TARGET_ENEMY_ALL: return "All Enemies";
+        case TARGET_SELF_SINGLE: return "Ally";
+        case TARGET_SELF_ALL: return "All Allies";
+        default: return "Target";
+    }
+}
+
+static const char* buff_label(BuffType buff) {
+    switch (buff) {
+        case BUFF_SHIELD: return "Shield";
+        case BUFF_WET: return "Wet";
+        case BUFF_BURN: return "Burn";
+        case BUFF_POISON: return "Poison";
+        case BUFF_POWER: return "Power";
+        case BUFF_NONE:
+        default: return "";
+    }
+}
+
+static COLORREF hp_state_color(int hp, int max_hp) {
+    if (max_hp <= 0) return RGB(120, 120, 120);
+    int pct = (hp * 100) / max_hp;
+    if (pct <= 25) return RGB(201, 62, 56);
+    if (pct <= 55) return RGB(213, 151, 55);
+    return RGB(71, 157, 91);
+}
+
+static void draw_section_title(int x, int y, const char* title) {
+    settextstyle_utf8(22, 0, "SimSun");
+    settextcolor(RGB(28, 36, 42));
+    outtextxy_utf8(x, y, title);
+    settextstyle_utf8(20, 0, "SimSun");
+}
+
+static void draw_soft_panel(int x, int y, int w, int h, COLORREF fill, COLORREF border) {
+    setfillcolor(fill);
+    fillrectangle(x, y, x + w, y + h);
+    setlinecolor(border);
+    rectangle(x, y, x + w, y + h);
+}
 
 static void present_frame() {
     if (g_defer_present > 0) return;
@@ -361,39 +462,73 @@ static int layout_changed_since(int* seen_version) {
     return 1;
 }
 
-static void draw_button(int x, int y, int w, int h, const char* label) {
-    draw_art_or_fill(&g_art_button_idle, x, y, w, h, RGB(236, 230, 198));
-    setlinecolor(RGB(65, 56, 43));
+static void draw_button_state(int x, int y, int w, int h, const char* label, int selected, int hover, int disabled) {
+    IMAGE* img = disabled ? &g_art_button_disabled : (selected ? &g_art_button_selected : &g_art_button_idle);
+    COLORREF fill = disabled ? RGB(204, 207, 203) : (selected ? RGB(199, 229, 208) : RGB(236, 230, 198));
+    draw_art_or_fill(img, x, y, w, h, fill);
+    if (hover && !disabled) {
+        setfillcolor(selected ? RGB(210, 240, 220) : RGB(246, 238, 207));
+        fillrectangle(x + 2, y + 2, x + w - 2, y + h - 2);
+    }
+    setlinecolor(disabled ? RGB(116, 124, 124) : (selected ? RGB(45, 112, 80) : (hover ? RGB(80, 113, 154) : RGB(65, 56, 43))));
     rectangle(x, y, x + w, y + h);
-    settextcolor(RGB(29, 31, 30));
-    outtextxy_utf8(x + 6, y + 6, label);
+    if (selected) {
+        setfillcolor(RGB(52, 150, 99));
+        fillrectangle(x + 7, y + 7, x + 22, y + h - 7);
+    }
+    settextcolor(disabled ? RGB(95, 98, 98) : (selected ? RGB(20, 42, 34) : RGB(29, 31, 30)));
+    outtextxy_clipped_utf8(x + (selected ? 30 : 12), y + (h - 20) / 2, w - (selected ? 42 : 24), label);
+    settextcolor(RGB(31, 37, 41));
     present_frame();
+}
+
+static void draw_button(int x, int y, int w, int h, const char* label) {
+    draw_button_state(x, y, w, h, label, 0, 0, 0);
 }
 
 // Draw a button and mark it as checked (used to indicate a confirmed selection)
 static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
-    draw_art_or_fill(&g_art_button_selected, x, y, w, h, RGB(200, 234, 214));
-    setlinecolor(RGB(45, 90, 73));
-    rectangle(x, y, x + w, y + h);
-    setfillcolor(RGB(52, 150, 99));
-    fillrectangle(x + 6, y + 6, x + 22, y + h - 6);
-    settextcolor(RGB(20, 42, 34));
-    outtextxy_utf8(x + 30, y + 6, label);
-    present_frame();
+    draw_button_state(x, y, w, h, label, 1, 0, 0);
 }
 
 // Draw a non-intrusive overlay message at the bottom of the screen to avoid
 // overlapping interactive UI elements (buttons, lists).
-static void draw_overlay_message(const char* utf8msg) {
-    std::string s = utf8_to_acp_str(utf8msg);
+static void draw_overlay_message_kind(const char* utf8msg, UiMessageKind kind) {
     update_layout();
-    int x = g_ui_margin, w = g_ui_w - (g_ui_margin * 2), h = 46, y = g_ui_h - g_ui_margin - h; // bottom area for messages
+    if (utf8msg && utf8msg[0] != '\0') {
+        for (int i = UI_MESSAGE_HISTORY - 1; i > 0; i--) {
+            strncpy(g_message_history[i], g_message_history[i - 1], sizeof(g_message_history[i]) - 1);
+            g_message_history[i][sizeof(g_message_history[i]) - 1] = '\0';
+        }
+        strncpy(g_message_history[0], utf8msg, sizeof(g_message_history[0]) - 1);
+        g_message_history[0][sizeof(g_message_history[0]) - 1] = '\0';
+        if (g_message_count < UI_MESSAGE_HISTORY) g_message_count++;
+    }
+    int x = g_ui_margin;
+    int w = g_ui_w - (g_ui_margin * 2);
+    int h = 70;
+    int y = g_ui_h - g_ui_margin - h;
+    COLORREF border = RGB(65, 56, 43);
+    COLORREF accent = RGB(80, 113, 154);
+    if (kind == UI_MSG_CONFIRM) { border = RGB(45, 112, 80); accent = RGB(52, 150, 99); }
+    if (kind == UI_MSG_ERROR) { border = RGB(150, 62, 54); accent = RGB(201, 62, 56); }
     draw_art_or_fill(&g_art_message_panel, x, y, w, h, RGB(246, 242, 222));
-    setlinecolor(RGB(65, 56, 43));
+    setlinecolor(border);
     rectangle(x, y, x + w, y + h);
+    setfillcolor(accent);
+    fillrectangle(x + 8, y + 10, x + 14, y + h - 10);
     settextcolor(RGB(29, 31, 30));
-    outtextxy(x + 6, y + 10, s.c_str());
+    int line_y = y + 9;
+    for (int i = 0; i < g_message_count; i++) {
+        settextcolor(i == 0 ? RGB(29, 31, 30) : RGB(93, 89, 79));
+        outtextxy_clipped_utf8(x + 24, line_y, w - 36, g_message_history[i]);
+        line_y += 20;
+    }
     present_frame();
+}
+
+static void draw_overlay_message(const char* utf8msg) {
+    draw_overlay_message_kind(utf8msg, UI_MSG_HINT);
 }
 
 static int clamp_meter_width(int value, int max_value, int width) {
@@ -416,61 +551,170 @@ static void draw_meter(int x, int y, int w, int value, int max_value, IMAGE* fil
     rectangle(x, y, x + w, y + 14);
 }
 
-static void draw_character_hud_row(const Character* ch, int x, int y, const char* prefix) {
+static void draw_meter_colored(int x, int y, int w, int value, int max_value, COLORREF fill) {
+    int inner_w = w - 4;
+    int fill_w = clamp_meter_width(value, max_value, inner_w);
+    setfillcolor(RGB(36, 40, 43));
+    fillrectangle(x, y, x + w, y + 14);
+    if (fill_w > 0) {
+        setfillcolor(fill);
+        fillrectangle(x + 2, y + 2, x + 2 + fill_w, y + 12);
+    }
+    setlinecolor(RGB(68, 55, 35));
+    rectangle(x, y, x + w, y + 14);
+}
+
+static void draw_button_disabled(int x, int y, int w, int h, const char* label) {
+    draw_button_state(x, y, w, h, label, 0, 0, 1);
+}
+
+static void draw_character_hud_row(const Character* ch, int x, int y, int w, const char* prefix, int active, int hover) {
     if (!ch) return;
     char buf[128];
+    COLORREF row_fill = ch->is_alive ? (active ? RGB(236, 244, 229) : RGB(235, 232, 213)) : RGB(205, 205, 198);
+    COLORREF row_border = active ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(135, 122, 96));
+    draw_soft_panel(x, y, w, 42, row_fill, row_border);
+    if (active) {
+        setfillcolor(RGB(52, 150, 99));
+        fillrectangle(x, y, x + 5, y + 42);
+    }
     IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, x, y, 32, 32, RGB(167, 158, 139));
+    draw_art_or_fill(portrait, x + 8, y + 5, 32, 32, RGB(167, 158, 139));
     setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
-    rectangle(x, y, x + 32, y + 32);
+    rectangle(x + 8, y + 5, x + 40, y + 37);
     if (!ch->is_alive) {
         setlinecolor(RGB(130, 30, 30));
-        line(x + 3, y + 3, x + 29, y + 29);
-        line(x + 29, y + 3, x + 3, y + 29);
+        line(x + 11, y + 8, x + 37, y + 34);
+        line(x + 37, y + 8, x + 11, y + 34);
     }
     settextcolor(RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "%s %s", prefix, ch->name);
-    outtextxy_utf8(x + 40, y, buf);
+    outtextxy_clipped_utf8(x + 48, y + 4, w - 58, buf);
     snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
-    outtextxy_utf8(x + 40, y + 17, buf);
-    draw_meter(x + 134, y + 17, g_side_w - 162, ch->hp, ch->max_hp, &g_art_hp_fill);
+    outtextxy_utf8(x + 48, y + 22, buf);
+    draw_meter_colored(x + 118, y + 24, w - 128, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
 }
 
 // Render both teams' characters and HP on a side panel (right side) so that
 // their HP is always visible during the turn.
 static void draw_team_hp_panel(const GameState* st) {
-    if (!st) return;
     update_layout();
     int x = g_side_x + 10, y = g_team_panel_y + 10;
     char buf[128];
     draw_art_or_fill(&g_art_side_panel, g_side_x, g_team_panel_y, g_side_w, g_team_panel_h, RGB(242, 239, 220));
     setlinecolor(RGB(62, 76, 92));
     rectangle(g_side_x, g_team_panel_y, g_side_x + g_side_w, g_team_panel_y + g_team_panel_h);
-    settextcolor(RGB(27, 33, 35));
-    snprintf(buf, sizeof(buf), "Player1: %s", st->p1.name);
-    outtextxy_utf8(x + 6, y, buf); y += 22;
-    for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), "P1[%d]", i);
-        draw_character_hud_row(&st->p1.team[i], x + 6, y, buf);
-        y += 38;
+    if (!st) {
+        draw_section_title(x + 6, y, "Team HUD");
+        settextcolor(RGB(93, 89, 79));
+        outtextxy_utf8(x + 6, y + 36, "Team status appears here.");
+        return;
     }
-    y += 6;
-    snprintf(buf, sizeof(buf), "Player2: %s", st->p2.name);
-    outtextxy_utf8(x + 6, y, buf); y += 22;
+    settextcolor(RGB(27, 33, 35));
+    snprintf(buf, sizeof(buf), "Player 1  %s", st->p1.name);
+    draw_section_title(x + 6, y, buf); y += 30;
     for (int i = 0; i < TEAM_SIZE; i++) {
-        snprintf(buf, sizeof(buf), "P2[%d]", i);
-        draw_character_hud_row(&st->p2.team[i], x + 6, y, buf);
-        y += 38;
+        snprintf(buf, sizeof(buf), "%d", i + 1);
+        draw_character_hud_row(&st->p1.team[i], x + 6, y, g_side_w - 32, buf, i == st->p1.active_idx, 0);
+        y += 46;
+    }
+    y += 8;
+    snprintf(buf, sizeof(buf), "Player 2  %s", st->p2.name);
+    draw_section_title(x + 6, y, buf); y += 30;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        snprintf(buf, sizeof(buf), "%d", i + 1);
+        draw_character_hud_row(&st->p2.team[i], x + 6, y, g_side_w - 32, buf, i == st->p2.active_idx, 0);
+        y += 46;
     }
 }
 
-static void draw_button_disabled(int x, int y, int w, int h, const char* label) {
-    draw_art_or_fill(&g_art_button_disabled, x, y, w, h, RGB(204, 207, 203));
-    setlinecolor(RGB(116, 124, 124));
+static void build_card_stats_text(const Card* c, char* out, size_t out_size) {
+    char stats[128] = "";
+    int wrote = 0;
+    if (!c || !out || out_size == 0) return;
+    if (c->base_damage > 0) wrote += snprintf(stats + wrote, sizeof(stats) - wrote, "DMG %d  ", c->base_damage);
+    if (c->base_defense > 0) wrote += snprintf(stats + wrote, sizeof(stats) - wrote, "SHD %d  ", c->base_defense);
+    if (c->base_heal > 0) wrote += snprintf(stats + wrote, sizeof(stats) - wrote, "HEAL %d  ", c->base_heal);
+    if (c->buff_effect != BUFF_NONE) {
+        const char* buff = buff_label(c->buff_effect);
+        if (buff && buff[0] != '\0') {
+            wrote += snprintf(stats + wrote, sizeof(stats) - wrote, "%s", buff);
+            if (c->buff_value > 0) wrote += snprintf(stats + wrote, sizeof(stats) - wrote, " +%d", c->buff_value);
+            if (c->buff_duration > 0) wrote += snprintf(stats + wrote, sizeof(stats) - wrote, " %dt", c->buff_duration);
+            wrote += snprintf(stats + wrote, sizeof(stats) - wrote, "  ");
+        }
+    }
+    if (wrote == 0) snprintf(stats, sizeof(stats), "Utility  ");
+    snprintf(out, out_size, "%sTarget: %s", stats, target_type_label(c->target_type));
+}
+
+static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, int selected, int hover, int disabled, int quantity) {
+    if (!c) return;
+    char buf[256];
+    COLORREF elem = disabled ? RGB(128, 128, 128) : element_color(c->element);
+    COLORREF fill = disabled ? RGB(210, 211, 205) : (selected ? RGB(239, 246, 228) : (hover ? RGB(246, 239, 216) : RGB(232, 225, 197)));
+    COLORREF border = disabled ? RGB(126, 126, 120) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
+    draw_art_or_fill(&g_art_card_plate, x, y, w, h, fill);
+    setfillcolor(fill);
+    fillrectangle(x + 2, y + 2, x + w - 2, y + h - 2);
+    setlinecolor(border);
     rectangle(x, y, x + w, y + h);
-    settextcolor(RGB(95, 98, 98));
-    outtextxy_utf8(x + 6, y + 6, label);
+    setfillcolor(elem);
+    fillrectangle(x, y, x + 9, y + h);
+    if (selected) {
+        setlinecolor(RGB(52, 150, 99));
+        rectangle(x + 2, y + 2, x + w - 2, y + h - 2);
+    }
+
+    setfillcolor(disabled ? RGB(150, 150, 145) : RGB(244, 226, 134));
+    fillrectangle(x + w - 46, y + 8, x + w - 12, y + 34);
+    setlinecolor(RGB(93, 78, 38));
+    rectangle(x + w - 46, y + 8, x + w - 12, y + 34);
+    snprintf(buf, sizeof(buf), "%d", c->energy_cost);
+    settextcolor(RGB(47, 39, 18));
+    outtextxy_utf8(x + w - 34, y + 12, buf);
+
+    settextstyle_utf8(22, 0, "SimSun");
+    settextcolor(disabled ? RGB(91, 91, 88) : RGB(27, 33, 35));
+    snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
+    outtextxy_clipped_utf8(x + 20, y + 8, w - 78, buf);
+    settextstyle_utf8(18, 0, "SimSun");
+    settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
+    snprintf(buf, sizeof(buf), "%s / %s", element_label(c->element), card_type_label(c->type));
+    outtextxy_clipped_utf8(x + 20, y + 34, w - 44, buf);
+    build_card_stats_text(c, buf, sizeof(buf));
+    outtextxy_clipped_utf8(x + 20, y + 53, w - 34, buf);
+    if (quantity > 0) {
+        snprintf(buf, sizeof(buf), "x%d", quantity);
+        setfillcolor(RGB(50, 68, 86));
+        fillrectangle(x + w - 47, y + h - 27, x + w - 12, y + h - 8);
+        settextcolor(RGB(246, 242, 222));
+        outtextxy_utf8(x + w - 40, y + h - 25, buf);
+    }
+    settextstyle_utf8(20, 0, "SimSun");
     settextcolor(RGB(31, 37, 41));
+    present_frame();
+}
+
+static void draw_character_option_panel(const Character* ch, int idx, int x, int y, int w, int h, int selected, int hover, int disabled) {
+    if (!ch) return;
+    char buf[160];
+    COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(237, 246, 230) : (hover ? RGB(246, 239, 216) : RGB(232, 225, 197)));
+    COLORREF border = disabled ? RGB(124, 124, 119) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
+    draw_soft_panel(x, y, w, h, fill, border);
+    setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
+    fillrectangle(x, y, x + 8, y + h);
+    IMAGE* portrait = portrait_for_element(ch->element);
+    draw_art_or_fill(portrait, x + 16, y + 8, 34, 34, RGB(167, 158, 139));
+    setlinecolor(RGB(82, 70, 45));
+    rectangle(x + 16, y + 8, x + 50, y + 42);
+    settextcolor(disabled ? RGB(92, 92, 88) : RGB(27, 33, 35));
+    snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
+    outtextxy_clipped_utf8(x + 60, y + 8, w - 72, buf);
+    snprintf(buf, sizeof(buf), "HP %d/%d   %s   Speed %d%s", ch->hp, ch->max_hp, element_label(ch->element), ch->speed, ch->is_alive ? "" : "   Defeated");
+    settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
+    outtextxy_clipped_utf8(x + 60, y + 28, w - 72, buf);
+    draw_meter_colored(x + 60, y + h - 17, w - 78, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     present_frame();
 }
 
@@ -577,20 +821,11 @@ void CloseGUI() {
 void print_character(const Character* ch) {
     if (!ch) return;
 #ifdef USE_EASYX
-    char buf[256];
     int y = g_draw_y;
     int x = g_main_x + 16;
-    IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, x, y, 38, 38, RGB(167, 158, 139));
-    setlinecolor(ch->is_alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
-    rectangle(x, y, x + 38, y + 38);
-    snprintf(buf, sizeof(buf), "%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s",
-             ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
-             ch->is_alive ? "" : "[DEAD]");
-    settextcolor(RGB(27, 33, 35));
-    outtextxy_utf8(x + 48, y + 2, buf);
-    draw_meter(x + 48, y + 24, 240, ch->hp, ch->max_hp, &g_art_hp_fill);
-    g_draw_y += 46;
+    int w = clamp_int(g_main_w - 64, 360, 620);
+    draw_character_option_panel(ch, ch->char_id, x, y, w, 58, 0, 0, !ch->is_alive);
+    g_draw_y += 66;
 #else
     printf("%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s\n",
            ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
@@ -601,19 +836,12 @@ void print_character(const Character* ch) {
 void print_card(const Card* c, int idx) {
     if (!c) return;
 #ifdef USE_EASYX
-    char buf[256];
     int y = g_draw_y;
     int x = g_main_x + 16;
     int w = g_main_w - 32;
     if (w > 700) w = 700;
-    draw_art_or_fill(&g_art_card_plate, x, y, w, 38, RGB(222, 215, 184));
-    setlinecolor(RGB(83, 72, 55));
-    rectangle(x, y, x + w, y + 38);
-    snprintf(buf, sizeof(buf), " [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d",
-             idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
-    settextcolor(RGB(29, 31, 30));
-    outtextxy_utf8(x + 8, y + 9, buf);
-    g_draw_y += 42;
+    draw_card_panel(c, idx, x, y, w, UI_CARD_H, 0, 0, 0, 0);
+    g_draw_y += UI_CARD_H + UI_GAP;
 #else
     printf(" [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d\n",
            idx, c->name, c->card_id, c->energy_cost, c->base_damage, c->base_defense, c->base_heal, c->type, c->target_type);
