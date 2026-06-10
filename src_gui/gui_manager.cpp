@@ -11,9 +11,10 @@
 
 #define UI_PAD 12
 #define UI_GAP 8
-#define UI_CARD_H 74
+#define UI_CARD_H 118
+#define UI_SKILL_CARD_H 132
+#define UI_CHARACTER_CARD_H 132
 #define UI_BUTTON_H 44
-#define UI_MESSAGE_HISTORY 3
 
 static int g_draw_y = 10;
 void print_character(const Character* ch);
@@ -23,7 +24,6 @@ static IMAGE g_art_main_panel;
 static IMAGE g_art_status_panel;
 static IMAGE g_art_side_panel;
 static IMAGE g_art_records_panel;
-static IMAGE g_art_message_panel;
 static IMAGE g_art_button_idle;
 static IMAGE g_art_button_selected;
 static IMAGE g_art_button_disabled;
@@ -58,8 +58,6 @@ static int g_last_canvas_w = 0;
 static int g_last_canvas_h = 0;
 static int g_ui_layout_version = 0;
 static int g_defer_present = 0;
-static char g_message_history[UI_MESSAGE_HISTORY][160] = { {0}, {0}, {0} };
-static int g_message_count = 0;
 
 static void draw_background_shell();
 static void present_frame();
@@ -96,17 +94,17 @@ static void update_layout() {
         g_main_w = g_side_x - g_main_x - center_gap;
     }
     if (g_main_w < 300) g_main_w = 300;
-    int message_top = h - g_ui_margin - 70;
-    g_main_h = message_top - g_main_y - g_ui_margin;
+    int content_bottom = h - g_ui_margin;
+    g_main_h = content_bottom - g_main_y;
     if (g_main_h < 360) g_main_h = h - g_main_y - 58;
     g_team_panel_y = g_main_y;
-    g_team_panel_h = clamp_int(message_top - g_team_panel_y - g_ui_margin, 248, 360);
+    g_team_panel_h = clamp_int(content_bottom - g_team_panel_y, 248, 430);
     g_records_panel_y = g_team_panel_y + g_team_panel_h + g_ui_margin;
-    g_records_panel_h = clamp_int(message_top - g_records_panel_y, 120, 220);
+    g_records_panel_h = clamp_int(content_bottom - g_records_panel_y, 120, 220);
 }
 
 static int bottom_button_y() {
-    return g_ui_h - g_ui_margin - 96;
+    return g_ui_h - g_ui_margin - UI_BUTTON_H;
 }
 
 static void invalidate_ui_assets() {
@@ -188,7 +186,6 @@ static void load_ui_assets() {
     loadimage(&g_art_status_panel, "assets\\ui\\status_panel.bmp", g_ui_w, g_status_h, true);
     loadimage(&g_art_side_panel, "assets\\ui\\side_panel.bmp", g_side_w, g_team_panel_h, true);
     loadimage(&g_art_records_panel, "assets\\ui\\records_panel.bmp", g_side_w, g_records_panel_h, true);
-    loadimage(&g_art_message_panel, "assets\\ui\\message_panel.bmp", g_ui_w - (g_ui_margin * 2), 46, true);
     loadimage(&g_art_button_idle, "assets\\ui\\button_idle.bmp", 420, 60, true);
     loadimage(&g_art_button_selected, "assets\\ui\\button_selected.bmp", 420, 60, true);
     loadimage(&g_art_button_disabled, "assets\\ui\\button_disabled.bmp", 420, 60, true);
@@ -211,17 +208,6 @@ static void draw_art_or_fill(IMAGE* img, int x, int y, int w, int h, COLORREF fi
     }
     setfillcolor(fill);
     fillrectangle(x, y, x + w, y + h);
-}
-
-static IMAGE* portrait_for_element(ElementType element) {
-    switch (element) {
-        case ELEMENT_WATER: return &g_art_portrait_water;
-        case ELEMENT_FIRE: return &g_art_portrait_fire;
-        case ELEMENT_GRASS: return &g_art_portrait_grass;
-        case ELEMENT_ELECTRIC: return &g_art_portrait_electric;
-        case ELEMENT_NORMAL:
-        default: return &g_art_portrait_normal;
-    }
 }
 
 static void draw_background_shell() {
@@ -539,45 +525,9 @@ static void draw_button(int x, int y, int w, int h, const char* label) {
     draw_button_state(x, y, w, h, label, 0, 0, 0);
 }
 
-// Draw a button and mark it as checked (used to indicate a confirmed selection)
-static void draw_button_with_check(int x, int y, int w, int h, const char* label) {
-    draw_button_state(x, y, w, h, label, 1, 0, 0);
-}
-
-// Draw a non-intrusive overlay message at the bottom of the screen to avoid
-// overlapping interactive UI elements (buttons, lists).
 static void draw_overlay_message_kind(const char* utf8msg, UiMessageKind kind) {
-    update_layout();
-    if (utf8msg && utf8msg[0] != '\0' && strncmp(g_message_history[0], utf8msg, sizeof(g_message_history[0])) != 0) {
-        for (int i = UI_MESSAGE_HISTORY - 1; i > 0; i--) {
-            strncpy(g_message_history[i], g_message_history[i - 1], sizeof(g_message_history[i]) - 1);
-            g_message_history[i][sizeof(g_message_history[i]) - 1] = '\0';
-        }
-        strncpy(g_message_history[0], utf8msg, sizeof(g_message_history[0]) - 1);
-        g_message_history[0][sizeof(g_message_history[0]) - 1] = '\0';
-        if (g_message_count < UI_MESSAGE_HISTORY) g_message_count++;
-    }
-    int x = g_ui_margin;
-    int w = g_ui_w - (g_ui_margin * 2);
-    int h = 70;
-    int y = g_ui_h - g_ui_margin - h;
-    COLORREF border = RGB(65, 56, 43);
-    COLORREF accent = RGB(80, 113, 154);
-    if (kind == UI_MSG_CONFIRM) { border = RGB(45, 112, 80); accent = RGB(52, 150, 99); }
-    if (kind == UI_MSG_ERROR) { border = RGB(150, 62, 54); accent = RGB(201, 62, 56); }
-    draw_art_or_fill(&g_art_message_panel, x, y, w, h, RGB(246, 242, 222));
-    setlinecolor(border);
-    rectangle(x, y, x + w, y + h);
-    setfillcolor(accent);
-    fillrectangle(x + 8, y + 10, x + 14, y + h - 10);
-    settextcolor(RGB(29, 31, 30));
-    int line_y = y + 9;
-    for (int i = 0; i < g_message_count; i++) {
-        settextcolor(i == 0 ? RGB(29, 31, 30) : RGB(93, 89, 79));
-        outtextxy_clipped_utf8(x + 24, line_y, w - 36, g_message_history[i]);
-        line_y += 20;
-    }
-    present_frame();
+    (void)utf8msg;
+    (void)kind;
 }
 
 static void draw_overlay_message(const char* utf8msg) {
@@ -617,10 +567,76 @@ static void draw_meter_colored(int x, int y, int w, int value, int max_value, CO
     rectangle(x, y, x + w, y + 14);
 }
 
+static void DrawCardFrame(int x, int y, int w, int h, COLORREF fill, COLORREF border, int selected, int hover, int disabled) {
+    COLORREF outer = disabled ? RGB(118, 118, 113) : (selected ? RGB(46, 132, 87) : (hover ? RGB(71, 105, 151) : border));
+    setfillcolor(fill);
+    fillrectangle(x, y, x + w, y + h);
+    setlinecolor(outer);
+    rectangle(x, y, x + w, y + h);
+    if (selected || hover) {
+        setlinecolor(selected ? RGB(53, 172, 111) : RGB(105, 142, 186));
+        rectangle(x + 2, y + 2, x + w - 2, y + h - 2);
+    }
+    if (disabled) {
+        setlinecolor(RGB(142, 142, 136));
+        line(x + 7, y + 7, x + w - 7, y + h - 7);
+        line(x + w - 7, y + 7, x + 7, y + h - 7);
+    }
+}
+
+static void DrawElementIcon(ElementType element, int cx, int cy, int size, int disabled) {
+    COLORREF color = disabled ? RGB(135, 135, 130) : element_color(element);
+    setfillcolor(color);
+    setlinecolor(RGB(64, 58, 48));
+    switch (element) {
+        case ELEMENT_WATER:
+            fillellipse(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
+            line(cx, cy - size / 2, cx + size / 3, cy + size / 2);
+            line(cx, cy - size / 2, cx - size / 3, cy + size / 2);
+            break;
+        case ELEMENT_FIRE: {
+            POINT fire_pts[3] = { { cx, cy - size / 2 }, { cx + size / 2, cy + size / 2 }, { cx - size / 2, cy + size / 2 } };
+            fillpolygon(fire_pts, 3);
+            break;
+        }
+        case ELEMENT_GRASS:
+            fillellipse(cx - size / 2, cy - size / 3, cx + size / 4, cy + size / 3);
+            fillellipse(cx - size / 4, cy - size / 3, cx + size / 2, cy + size / 3);
+            break;
+        case ELEMENT_ELECTRIC: {
+            POINT bolt[6] = {
+                { cx - size / 5, cy - size / 2 }, { cx + size / 3, cy - size / 2 },
+                { cx + size / 8, cy - size / 10 }, { cx + size / 2, cy - size / 10 },
+                { cx - size / 4, cy + size / 2 }, { cx, cy + size / 10 }
+            };
+            fillpolygon(bolt, 6);
+            break;
+        }
+        case ELEMENT_NORMAL:
+        default:
+            fillrectangle(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
+            break;
+    }
+}
+
+static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, int disabled) {
+    COLORREF base = disabled ? RGB(176, 176, 170) : element_color(element);
+    COLORREF bg = disabled ? RGB(198, 198, 192) : RGB(220, 229, 220);
+    setfillcolor(bg);
+    fillrectangle(x, y, x + w, y + h);
+    setlinecolor(RGB(101, 94, 79));
+    rectangle(x, y, x + w, y + h);
+    setfillcolor(base);
+    fillellipse(x + w / 5, y + h / 5, x + (w * 3) / 5, y + (h * 3) / 5);
+    setfillcolor(disabled ? RGB(150, 150, 145) : RGB(246, 226, 138));
+    fillrectangle(x + (w * 2) / 5, y + h / 2, x + (w * 4) / 5, y + (h * 4) / 5);
+    DrawElementIcon(element, x + w / 2, y + h / 2, clamp_int((w < h ? w : h) / 3, 18, 34), disabled);
+}
+
 static int team_slot_h() {
-    int header_h = 76;
+    int header_h = 82;
     int available = g_team_panel_h - header_h - (UI_PAD * 2) - ((TEAM_SIZE - 1) * UI_GAP);
-    return clamp_int(available / TEAM_SIZE, 54, 74);
+    return clamp_int(available / TEAM_SIZE, 78, 108);
 }
 
 static int team_panel_x_for_player(int player_id) {
@@ -653,39 +669,41 @@ static void draw_character_slot(const Character* ch, int slot_idx, int x, int y,
     if (!ch) return;
     char buf[160];
     int alive = ch->is_alive && !disabled;
-    COLORREF row_fill = alive ? (active ? RGB(236, 244, 229) : RGB(235, 232, 213)) : RGB(205, 205, 198);
-    COLORREF row_border = active ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(135, 122, 96));
-    int stripe_x1 = mirror ? x + w - 6 : x;
-    int stripe_x2 = mirror ? x + w : x + 6;
-    int portrait_x = mirror ? x + w - 44 : x + 10;
-    int text_x = mirror ? x + 12 : x + 52;
-    int text_w = w - 64;
-    int meter_x = text_x;
-    int meter_w = text_w;
-    draw_soft_panel(x, y, w, h, row_fill, row_border);
-    if (active) {
-        setfillcolor(RGB(52, 150, 99));
-        fillrectangle(stripe_x1, y, stripe_x2, y + h);
-    }
-    IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, portrait_x, y + 9, 34, 34, RGB(167, 158, 139));
-    setlinecolor(alive ? RGB(82, 70, 45) : RGB(100, 100, 100));
-    rectangle(portrait_x, y + 9, portrait_x + 34, y + 43);
-    if (!alive) {
-        setlinecolor(RGB(130, 30, 30));
-        line(portrait_x + 3, y + 12, portrait_x + 31, y + 40);
-        line(portrait_x + 31, y + 12, portrait_x + 3, y + 40);
-    }
-    settextstyle_utf8(h < 62 ? 17 : 18, 0, "SimSun");
-    settextcolor(alive ? RGB(27, 33, 35) : RGB(92, 92, 88));
+    COLORREF fill = alive ? (active ? RGB(237, 248, 233) : RGB(238, 233, 205)) : RGB(204, 204, 198);
+    COLORREF border = active ? RGB(42, 145, 92) : RGB(113, 101, 78);
+    DrawCardFrame(x, y, w, h, fill, border, active, hover, !alive);
+    setfillcolor(alive ? element_color(ch->element) : RGB(135, 135, 130));
+    fillrectangle(x + 1, y + 1, x + w - 1, y + 22);
+    settextstyle_utf8(16, 0, "SimSun");
+    settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
-    outtextxy_clipped_utf8(text_x, y + 6, text_w, buf);
+    outtextxy_clipped_utf8(x + 8, y + 4, w - 16, buf);
+
+    int art_size = clamp_int(h - 42, 34, 48);
+    int art_x = mirror ? x + w - art_size - 10 : x + 10;
+    int art_y = y + 30;
+    DrawPlaceholderArt(art_x, art_y, art_size, art_size, ch->element, !alive);
+    int text_x = mirror ? x + 10 : art_x + art_size + 10;
+    int text_w = w - art_size - 30;
+    int meter_y = y + h - 18;
+    int compact = h < 96;
+    if (active) {
+        setfillcolor(RGB(46, 132, 87));
+        fillrectangle(mirror ? x + 8 : x + w - 70, y + 27, mirror ? x + 70 : x + w - 8, y + 45);
+        settextcolor(RGB(255, 250, 230));
+        outtextxy_clipped_utf8(mirror ? x + 14 : x + w - 64, y + 28, 54, "ACTIVE");
+    }
+    if (!alive) {
+        settextcolor(RGB(128, 45, 42));
+        outtextxy_clipped_utf8(text_x, y + 28, text_w, "DEFEATED");
+    }
     settextstyle_utf8(16, 0, "SimSun");
     settextcolor(alive ? RGB(74, 67, 55) : RGB(104, 104, 100));
-    snprintf(buf, sizeof(buf), "HP %d/%d  %s  %s", ch->hp, ch->max_hp, element_label(ch->element),
-             ch->is_alive ? (active ? "Active" : "Ready") : "Defeated");
-    outtextxy_clipped_utf8(text_x, y + 27, text_w, buf);
-    draw_meter_colored(meter_x, y + h - 18, meter_w, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    snprintf(buf, sizeof(buf), "%s  SPD %d", element_label(ch->element), ch->speed);
+    outtextxy_clipped_utf8(text_x, y + (compact ? 34 : 50), text_w, buf);
+    snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
+    outtextxy_clipped_utf8(text_x, y + (compact ? 52 : 70), text_w, buf);
+    draw_meter_colored(x + 10, meter_y, w - 20, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     settextstyle_utf8(20, 0, "SimSun");
 }
 
@@ -757,40 +775,40 @@ static void build_card_stats_text(const Card* c, char* out, size_t out_size) {
 static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, int selected, int hover, int disabled, int quantity) {
     if (!c) return;
     char buf[256];
-    int compact = h < 72 || w < 360;
+    int compact = h < 112 || w < 210;
     COLORREF elem = disabled ? RGB(128, 128, 128) : element_color(c->element);
-    COLORREF fill = disabled ? RGB(210, 211, 205) : (selected ? RGB(239, 246, 228) : (hover ? RGB(246, 239, 216) : RGB(232, 225, 197)));
+    COLORREF fill = disabled ? RGB(210, 211, 205) : (selected ? RGB(240, 248, 231) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
     COLORREF border = disabled ? RGB(126, 126, 120) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
-    draw_art_or_fill(&g_art_card_plate, x, y, w, h, fill);
-    setfillcolor(fill);
-    fillrectangle(x + 2, y + 2, x + w - 2, y + h - 2);
-    setlinecolor(border);
-    rectangle(x, y, x + w, y + h);
+    DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
     setfillcolor(elem);
-    fillrectangle(x, y, x + 9, y + h);
-    if (selected) {
-        setlinecolor(RGB(52, 150, 99));
-        rectangle(x + 2, y + 2, x + w - 2, y + h - 2);
-    }
+    fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
+    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
+    settextcolor(RGB(255, 250, 230));
+    snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
+    outtextxy_clipped_utf8(x + 10, y + 6, w - 56, buf);
 
     setfillcolor(disabled ? RGB(150, 150, 145) : RGB(244, 226, 134));
-    fillrectangle(x + w - 46, y + 8, x + w - 12, y + 34);
+    fillrectangle(x + w - 42, y + 5, x + w - 10, y + 25);
     setlinecolor(RGB(93, 78, 38));
-    rectangle(x + w - 46, y + 8, x + w - 12, y + 34);
+    rectangle(x + w - 42, y + 5, x + w - 10, y + 25);
     snprintf(buf, sizeof(buf), "%d", c->energy_cost);
     settextcolor(RGB(47, 39, 18));
-    outtextxy_utf8(x + w - 34, y + 12, buf);
+    outtextxy_utf8(x + w - 31, y + 7, buf);
 
-    settextstyle_utf8(compact ? 19 : 22, 0, "SimSun");
-    settextcolor(disabled ? RGB(91, 91, 88) : RGB(27, 33, 35));
-    snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
-    outtextxy_clipped_utf8(x + 20, y + (compact ? 6 : 8), w - 78, buf);
-    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
+    int art_w = compact ? clamp_int(w / 4, 46, 62) : clamp_int(w / 3, 64, 92);
+    int art_h = h - 48;
+    if (art_h < 40) art_h = 40;
+    DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, c->element, disabled);
+    int text_x = x + art_w + 20;
+    int text_w = w - art_w - 30;
+    settextstyle_utf8(compact ? 15 : 16, 0, "SimSun");
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
     snprintf(buf, sizeof(buf), "%s / %s", element_label(c->element), card_type_label(c->type));
-    outtextxy_clipped_utf8(x + 20, y + (compact ? 28 : 34), w - 44, buf);
+    outtextxy_clipped_utf8(text_x, y + 38, text_w, buf);
     build_card_stats_text(c, buf, sizeof(buf));
-    outtextxy_clipped_utf8(x + 20, y + (compact ? h - 20 : 53), w - 34, buf);
+    outtextxy_clipped_utf8(text_x, y + 58, text_w, buf);
+    snprintf(buf, sizeof(buf), "Cost %d", c->energy_cost);
+    outtextxy_clipped_utf8(text_x, y + 78, text_w, buf);
     if (quantity > 0) {
         snprintf(buf, sizeof(buf), "x%d", quantity);
         setfillcolor(RGB(50, 68, 86));
@@ -806,23 +824,38 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
 static void draw_character_option_panel(const Character* ch, int idx, int x, int y, int w, int h, int selected, int hover, int disabled) {
     if (!ch) return;
     char buf[160];
-    COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(237, 246, 230) : (hover ? RGB(246, 239, 216) : RGB(232, 225, 197)));
+    int compact = h < 112;
+    COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(237, 247, 230) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
     COLORREF border = disabled ? RGB(124, 124, 119) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
-    draw_soft_panel(x, y, w, h, fill, border);
+    DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
     setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
-    fillrectangle(x, y, x + 8, y + h);
-    IMAGE* portrait = portrait_for_element(ch->element);
-    draw_art_or_fill(portrait, x + 16, y + 8, 34, 34, RGB(167, 158, 139));
-    setlinecolor(RGB(82, 70, 45));
-    rectangle(x + 16, y + 8, x + 50, y + 42);
-    settextcolor(disabled ? RGB(92, 92, 88) : RGB(27, 33, 35));
+    fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
+    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
+    settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
-    outtextxy_clipped_utf8(x + 60, y + 8, w - 72, buf);
-    snprintf(buf, sizeof(buf), "HP %d/%d   %s   Speed %d%s", ch->hp, ch->max_hp, element_label(ch->element), ch->speed, ch->is_alive ? "" : "   Defeated");
+    outtextxy_clipped_utf8(x + 10, y + 6, w - 20, buf);
+    int art_w = compact ? clamp_int(w / 4, 42, 58) : clamp_int(w / 3, 64, 96);
+    int art_h = compact ? clamp_int(h - 50, 28, 44) : h - 52;
+    DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, ch->element, disabled);
+    int text_x = x + art_w + 20;
+    int text_w = w - art_w - 30;
+    settextstyle_utf8(compact ? 15 : 16, 0, "SimSun");
+    settextcolor(disabled ? RGB(92, 92, 88) : RGB(27, 33, 35));
+    snprintf(buf, sizeof(buf), "%s  Speed %d", element_label(ch->element), ch->speed);
+    outtextxy_clipped_utf8(text_x, y + (compact ? 36 : 40), text_w, buf);
+    snprintf(buf, sizeof(buf), "HP %d/%d%s", ch->hp, ch->max_hp, ch->is_alive ? "" : "  Defeated");
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
-    outtextxy_clipped_utf8(x + 60, y + 28, w - 72, buf);
-    draw_meter_colored(x + 60, y + h - 17, w - 78, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    outtextxy_clipped_utf8(text_x, y + (compact ? h - 38 : 62), text_w, buf);
+    draw_meter_colored(text_x, y + h - 20, text_w, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     present_frame();
+}
+
+static void DrawCharacterCard(const Character* ch, int idx, int x, int y, int w, int h, int selected, int hover, int disabled) {
+    draw_character_option_panel(ch, idx, x, y, w, h, selected, hover, disabled);
+}
+
+static void DrawSkillCard(const Card* c, int idx, int x, int y, int w, int h, int selected, int hover, int disabled, int quantity) {
+    draw_card_panel(c, idx, x, y, w, h, selected, hover, disabled, quantity);
 }
 
 static int compute_planned_card_rects(int card_count, int start_y, int footer_y, int* xs, int* ys, int* ws, int* hs) {
@@ -834,7 +867,7 @@ static int compute_planned_card_rects(int card_count, int start_y, int footer_y,
     int card_h = UI_CARD_H;
     if (rows > 0) {
         card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
-        card_h = clamp_int(card_h, 58, UI_CARD_H);
+        card_h = clamp_int(card_h, 104, UI_CARD_H);
     }
     int card_w = (columns == 2) ? ((available_w - UI_GAP) / 2) : clamp_int(available_w, 280, 680);
     int origin_x = g_main_x + 24;
@@ -849,10 +882,33 @@ static int compute_planned_card_rects(int card_count, int start_y, int footer_y,
     return columns;
 }
 
+static int compute_card_grid_rects(int count, int start_y, int footer_y, int preferred_h, int* xs, int* ys, int* ws, int* hs) {
+    int available_w = g_main_w - 48;
+    int available_h = footer_y - start_y - UI_GAP;
+    int columns = available_w >= 620 ? 2 : 1;
+    int rows = (count + columns - 1) / columns;
+    int card_w = (available_w - ((columns - 1) * UI_GAP)) / columns;
+    int card_h = preferred_h;
+    if (rows > 0) {
+        card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
+        card_h = clamp_int(card_h, 104, preferred_h);
+    }
+    int origin_x = g_main_x + 24;
+    for (int i = 0; i < count; i++) {
+        int col = i % columns;
+        int row = i / columns;
+        xs[i] = origin_x + col * (card_w + UI_GAP);
+        ys[i] = start_y + row * (card_h + UI_GAP);
+        ws[i] = card_w;
+        hs[i] = card_h;
+    }
+    return columns;
+}
+
 static int visible_card_rows_for_current_layout() {
     int start_y = g_main_y + 112;
     int available_h = bottom_button_y() - start_y - UI_GAP;
-    return clamp_int(available_h / (UI_CARD_H + UI_GAP), 3, 8);
+    return clamp_int((available_h / (UI_CARD_H + UI_GAP)) * 2, 3, 8);
 }
 
 static void draw_center_battlefield_frame(const char* title, UiRect* out_rect) {
@@ -945,7 +1001,6 @@ static void draw_battle_plan_screen(GameState* st, int player_id, const ActionRe
     draw_button_state(bx, by, bw, bh, "End Turn", 0, hover_action == 0, 0);
     draw_button_state(bx, by + 55, bw, bh, "Play Card", 0, hover_action == 1, 0);
     draw_button_state(bx, by + 110, bw, bh, can_edit ? "Edit Card" : "Edit Action", 0, hover_action == 3, !can_edit);
-    draw_overlay_message_kind("Choose a card, end turn, or click your side panel to switch.", UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -963,7 +1018,6 @@ static void draw_target_select_screen(GameState* st, int player_id, const Action
         get_team_slot_rect(target_player_id, t, target_rects ? &target_rects[t] : NULL);
     }
     draw_button_state(g_main_x + 16, bottom_button_y(), 120, 38, "Back", 0, hover_target == 10, 0);
-    draw_overlay_message_kind("Select a target from the highlighted side panel.", UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -984,33 +1038,36 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     draw_line(buf);
     int cx = g_main_x + 24;
     int cy = g_draw_y + 8;
-    int available_w = g_main_w - 48;
-    int controls_w = 42 + UI_GAP + 58 + UI_GAP + 42;
-    int card_w = qty ? clamp_int(available_w - controls_w - UI_GAP, 260, 620) : clamp_int(available_w, 280, 680);
-    int ch = UI_CARD_H;
+    int card_x[MAX_GLOBAL_CARDS] = {0};
+    int card_y[MAX_GLOBAL_CARDS] = {0};
+    int card_w_arr[MAX_GLOBAL_CARDS] = {0};
+    int card_h_arr[MAX_GLOBAL_CARDS] = {0};
+    int footer_y = bottom_button_y();
+    compute_card_grid_rects(show, cy, footer_y - UI_GAP, UI_SKILL_CARD_H, card_x, card_y, card_w_arr, card_h_arr);
     for (int i = 0; i < show; i++) {
-        int y = cy + i * (ch + UI_GAP);
-        set_ui_rect(card_rects ? &card_rects[i] : NULL, cx, y, card_w, ch);
-        draw_card_panel(&g_all_cards[i], i, cx, y, card_w, ch, i == selected_idx || (qty && qty[i] > 0), hover_card == i, 0, qty ? qty[i] : 0);
+        int x = card_x[i];
+        int y = card_y[i];
+        int card_w = card_w_arr[i];
+        int ch = card_h_arr[i];
+        set_ui_rect(card_rects ? &card_rects[i] : NULL, x, y, card_w, ch);
+        DrawSkillCard(&g_all_cards[i], i, x, y, card_w, ch, i == selected_idx || (qty && qty[i] > 0), hover_card == i, 0, qty ? qty[i] : 0);
         if (qty) {
-            int x_minus = cx + card_w + UI_GAP;
-            int x_qty = x_minus + 42 + UI_GAP;
-            int x_plus = x_qty + 58 + UI_GAP;
-            set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, y + 15, 42, 38);
-            set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, y + 15, 42, 38);
-            draw_button_state(x_minus, y + 15, 42, 38, "-", 0, hover_minus == i, qty[i] <= 0);
+            int x_plus = x + card_w - 48;
+            int x_qty = x_plus - 52;
+            int x_minus = x_qty - 44;
+            int control_y = y + ch - 42;
+            set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, control_y, 36, 32);
+            set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, control_y, 36, 32);
+            draw_button_state(x_minus, control_y, 36, 32, "-", 0, hover_minus == i, qty[i] <= 0);
             snprintf(buf, sizeof(buf), "%d", qty[i]);
-            draw_button_state(x_qty, y + 15, 58, 38, buf, qty[i] > 0, 0, 0);
-            draw_button_state(x_plus, y + 15, 42, 38, "+", 0, hover_plus == i, selected_count >= max_select);
+            draw_button_state(x_qty, control_y, 44, 32, buf, qty[i] > 0, 0, 0);
+            draw_button_state(x_plus, control_y, 36, 32, "+", 0, hover_plus == i, selected_count >= max_select);
         }
     }
-    int footer_y = bottom_button_y();
     set_ui_rect(finish_rect, cx, footer_y, 150, 40);
     set_ui_rect(confirm_rect, cx + 162, footer_y, 130, 40);
     draw_button_state(cx, footer_y, 150, 40, qty ? "End Building" : "Finish Build", 0, hover_finish, 0);
     if (!qty) draw_button_state(cx + 162, footer_y, 130, 40, "Confirm", selected_idx >= 0, hover_confirm, 0);
-    snprintf(buf, sizeof(buf), "Total cards: %d/%d", selected_count, max_select);
-    draw_overlay_message_kind(buf, UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -1025,7 +1082,6 @@ static void draw_main_menu_screen(int selected_mode, int hover_choice, int hover
     draw_button_state(bx, by, bw, bh, "Local PvP", selected_mode == MODE_PVP, hover_choice == MODE_PVP, 0);
     draw_button_state(bx, by + 88, bw, bh, "AI PvE", selected_mode == MODE_PVE, hover_choice == MODE_PVE, 0);
     draw_button_state(bx, by + 190, 140, 42, "Confirm", selected_mode >= 0, hover_confirm, 0);
-    draw_overlay_message_kind("F11 toggles fullscreen. Esc quits.", UI_MSG_HINT);
     end_deferred_present();
 }
 
@@ -1075,8 +1131,8 @@ void print_character(const Character* ch) {
     int y = g_draw_y;
     int x = g_main_x + 16;
     int w = clamp_int(g_main_w - 64, 360, 620);
-    draw_character_option_panel(ch, ch->char_id, x, y, w, 58, 0, 0, !ch->is_alive);
-    g_draw_y += 66;
+    DrawCharacterCard(ch, ch->char_id, x, y, w, UI_CHARACTER_CARD_H, 0, 0, !ch->is_alive);
+    g_draw_y += UI_CHARACTER_CARD_H + UI_GAP;
 #else
     printf("%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s\n",
            ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
@@ -1091,7 +1147,7 @@ void print_card(const Card* c, int idx) {
     int x = g_main_x + 16;
     int w = g_main_w - 32;
     if (w > 700) w = 700;
-    draw_card_panel(c, idx, x, y, w, UI_CARD_H, 0, 0, 0, 0);
+    DrawSkillCard(c, idx, x, y, w, UI_CARD_H, 0, 0, 0, 0);
     g_draw_y += UI_CARD_H + UI_GAP;
 #else
     printf(" [%2d] %s (ID:%d) Cost:%d Dmg:%d Def:%d Heal:%d Type:%d Target:%d\n",
@@ -1109,6 +1165,18 @@ static void draw_battle_screen(GameState state) {
     UiRect battlefield = {};
     snprintf(buf, sizeof(buf), "Battlefield - Round %d", state.round_count);
     draw_center_battlefield_frame(buf, &battlefield);
+    int active_gap = UI_GAP + 8;
+    int active_w = (battlefield.w - (UI_PAD * 4) - active_gap) / 2;
+    int active_h = clamp_int(battlefield.h - 58, 116, UI_CHARACTER_CARD_H);
+    int active_y = battlefield.y + 42;
+    DrawCharacterCard(&state.p1.team[state.p1.active_idx], state.p1.active_idx,
+                      battlefield.x + UI_PAD, active_y, active_w, active_h, 1, 0,
+                      !state.p1.team[state.p1.active_idx].is_alive);
+    DrawCharacterCard(&state.p2.team[state.p2.active_idx], state.p2.active_idx,
+                      battlefield.x + UI_PAD + active_w + active_gap, active_y, active_w, active_h, 1, 0,
+                      !state.p2.team[state.p2.active_idx].is_alive);
+    settextcolor(RGB(74, 86, 70));
+    outtextxy_clipped_utf8(battlefield.x + battlefield.w / 2 - 14, active_y + active_h / 2 - 8, 28, "VS");
 
     Player* active_player = (state.current_turn == state.p2.player_id) ? &state.p2 : &state.p1;
     int panel_x = g_main_x + UI_PAD;
@@ -1137,13 +1205,12 @@ static void draw_battle_screen(GameState state) {
         compute_planned_card_rects(active_player->hand_count, g_draw_y, footer_y, card_x, card_y, card_w, card_h);
         for (int i = 0; i < active_player->hand_count; i++) {
             if (card_y[i] + card_h[i] > footer_y) break;
-            draw_card_panel(&active_player->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, 0,
-                            active_player->energy < active_player->hand[i].energy_cost, 0);
+            DrawSkillCard(&active_player->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, 0,
+                          active_player->energy < active_player->hand[i].energy_cost, 0);
         }
     } else {
         draw_line("Hand empty");
     }
-    draw_overlay_message_kind("Battle state refreshed.", UI_MSG_HINT);
     end_deferred_present();
 #endif
 }
@@ -1551,10 +1618,9 @@ card_select:
                 int card_start_y = g_draw_y + 10;
                 compute_planned_card_rects(p->hand_count, card_start_y, back_y, card_x, card_y, card_w, card_h);
                 for (int i = 0; i < p->hand_count; i++) {
-                    draw_card_panel(&p->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
+                    DrawSkillCard(&p->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
                 }
                 draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
-                draw_overlay_message_kind("Choose a playable card.", UI_MSG_HINT);
                 end_deferred_present();
                 need_redraw = 0;
             }
@@ -1673,7 +1739,6 @@ switch_select:
                     get_team_slot_rect(player_id, i, &switch_rects[i]);
                 }
                 draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
-                draw_overlay_message_kind("Choose a living member from your side panel.", UI_MSG_HINT);
                 end_deferred_present();
                 need_redraw = 0;
             }
@@ -1756,6 +1821,86 @@ edit_select:
 #endif
 }
 
+#ifdef USE_EASYX
+static const Character* find_character_by_name(const GameState* state, const char* name) {
+    if (!state || !name || name[0] == '\0') return NULL;
+    for (int i = 0; i < TEAM_SIZE; i++) {
+        if (strcmp(state->p1.team[i].name, name) == 0) return &state->p1.team[i];
+        if (strcmp(state->p2.team[i].name, name) == 0) return &state->p2.team[i];
+    }
+    return NULL;
+}
+
+static int collect_resolution_targets(const GameState* state, const ActionRecord* record,
+                                      const ResolutionReport* report, const Character** targets, int max_targets) {
+    int count = 0;
+    if (!state || !record || !targets || max_targets <= 0) return 0;
+    if (report && report->event_count > 0) {
+        for (int i = 0; i < report->event_count && count < max_targets; i++) {
+            const Character* ch = find_character_by_name(state, report->events[i].target_name);
+            if (!ch) continue;
+            int duplicate = 0;
+            for (int k = 0; k < count; k++) {
+                if (targets[k] == ch) duplicate = 1;
+            }
+            if (!duplicate) targets[count++] = ch;
+        }
+    }
+    if (count > 0 || record->action.type != ACTION_PLAY_CARD || !record->has_played_card) return count;
+
+    const Player* acting = (record->player_id == state->p1.player_id) ? &state->p1 : &state->p2;
+    const Player* enemy = (record->player_id == state->p1.player_id) ? &state->p2 : &state->p1;
+    const Card* card = &record->played_card;
+    if (card->target_type == TARGET_ENEMY_ALL || card->target_type == TARGET_SELF_ALL) {
+        const Player* target_player = (card->target_type == TARGET_ENEMY_ALL) ? enemy : acting;
+        for (int i = 0; i < TEAM_SIZE && count < max_targets; i++) targets[count++] = &target_player->team[i];
+    } else if (card->target_type == TARGET_SELF_SINGLE) {
+        int idx = record->action.target_idx;
+        if (idx >= 10 && idx < 10 + TEAM_SIZE) idx -= 10;
+        if (idx < 0 || idx >= TEAM_SIZE) idx = acting->active_idx;
+        targets[count++] = &acting->team[idx];
+    } else {
+        int idx = record->action.target_idx;
+        if (idx < 0 || idx >= TEAM_SIZE) idx = enemy->active_idx;
+        targets[count++] = &enemy->team[idx];
+    }
+    return count;
+}
+
+static int draw_resolution_card_flow(const GameState* state, const ActionRecord* record, const ResolutionReport* report, int x, int y, int w) {
+    if (!state || !record || record->action.type != ACTION_PLAY_CARD || !record->has_played_card) return 0;
+    const Player* acting = (record->player_id == state->p1.player_id) ? &state->p1 : &state->p2;
+    const Character* caster = &acting->team[acting->active_idx];
+    const Character* targets[TEAM_SIZE] = { NULL, NULL, NULL };
+    int target_count = collect_resolution_targets(state, record, report, targets, TEAM_SIZE);
+    int arrow_w = 30;
+    int caster_w = clamp_int((w - 2 * arrow_w - 2 * UI_GAP) / 3, 150, 230);
+    int skill_w = clamp_int(caster_w, 150, 220);
+    int target_w = w - caster_w - skill_w - 2 * arrow_w - 2 * UI_GAP;
+    if (target_w < 150) target_w = 150;
+    int card_h = 124;
+    int target_h = target_count > 1 ? 88 : card_h;
+    int flow_h = target_count > 1 ? target_count * target_h + (target_count - 1) * UI_GAP : card_h;
+    DrawCharacterCard(caster, acting->active_idx, x, y, caster_w, card_h, 1, 0, !caster->is_alive);
+    settextcolor(RGB(74, 86, 70));
+    outtextxy_clipped_utf8(x + caster_w + 8, y + card_h / 2 - 8, arrow_w, "->");
+    DrawSkillCard(&record->played_card, record->action.card_hand_idx,
+                  x + caster_w + arrow_w + UI_GAP, y, skill_w, card_h, 1, 0, 0, 0);
+    outtextxy_clipped_utf8(x + caster_w + arrow_w + UI_GAP + skill_w + 8, y + card_h / 2 - 8, arrow_w, "->");
+    int tx = x + caster_w + skill_w + 2 * arrow_w + 2 * UI_GAP;
+    for (int i = 0; i < target_count; i++) {
+        int ty = y + i * (target_h + UI_GAP);
+        DrawCharacterCard(targets[i], i, tx, ty, target_w, target_h, 0, 0, !targets[i]->is_alive);
+    }
+    if (target_count <= 0) {
+        draw_soft_panel(tx, y, target_w, card_h, RGB(231, 229, 211), RGB(113, 101, 78));
+        settextcolor(RGB(84, 76, 62));
+        outtextxy_clipped_utf8(tx + 12, y + card_h / 2 - 8, target_w - 24, "No affected target");
+    }
+    return flow_h;
+}
+#endif
+
 void ShowResolutionStep(GameState state, const ActionRecord* record, const ResolutionReport* report, int step_number, int step_total) {
 #ifdef USE_EASYX
     begin_deferred_present();
@@ -1775,12 +1920,16 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
     } else {
         draw_line("Resolving: No actions to resolve");
     }
-    draw_line("Active characters");
-    int active_w = clamp_int((g_main_w - 56) / 2, 260, 380);
-    int active_y = g_draw_y;
-    draw_character_option_panel(&state.p1.team[state.p1.active_idx], state.p1.active_idx, g_main_x + 16, active_y, active_w, 58, 1, 0, !state.p1.team[state.p1.active_idx].is_alive);
-    draw_character_option_panel(&state.p2.team[state.p2.active_idx], state.p2.active_idx, g_main_x + 28 + active_w, active_y, active_w, 58, 1, 0, !state.p2.team[state.p2.active_idx].is_alive);
-    g_draw_y += 72;
+    if (record && record->action.type == ACTION_PLAY_CARD && record->has_played_card) {
+        int flow_h = draw_resolution_card_flow(&state, record, report, g_main_x + 16, g_draw_y, g_main_w - 32);
+        g_draw_y += flow_h + 14;
+    } else {
+        int active_w = clamp_int((g_main_w - 56) / 2, 220, 320);
+        int active_y = g_draw_y;
+        DrawCharacterCard(&state.p1.team[state.p1.active_idx], state.p1.active_idx, g_main_x + 16, active_y, active_w, 116, 1, 0, !state.p1.team[state.p1.active_idx].is_alive);
+        DrawCharacterCard(&state.p2.team[state.p2.active_idx], state.p2.active_idx, g_main_x + 28 + active_w, active_y, active_w, 116, 1, 0, !state.p2.team[state.p2.active_idx].is_alive);
+        g_draw_y += 130;
+    }
     if (report && report->event_count > 0) {
         draw_line("Resolution events");
         for (int i = 0; i < report->event_count; i++) {
@@ -1809,9 +1958,8 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
     } else {
         draw_line("Damage details: no damage");
     }
-    draw_overlay_message_kind("Click or press any key to continue.", UI_MSG_CONFIRM);
     end_deferred_present();
-    wait_for_fresh_ack("Click or press any key to continue...");
+    wait_for_fresh_ack("");
 #else
     printf("[Resolution %d/%d] %s\n", step_number, step_total, record ? record->summary : "");
     if (report && report->event_count > 0) {
@@ -1839,22 +1987,32 @@ single_character_select:
     int layout_version = g_ui_layout_version;
     char buf[128]; snprintf(buf, sizeof(buf), "=== Character Select === Player %d selecting for slot %d", player_id, slot_number); settextcolor(BLACK); draw_line(buf);
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); return 0; }
-    // Draw clickable list but keep selection until confirmed
-    int sx = g_main_x + 24, sy = g_draw_y + 10, sw = clamp_int(g_main_w - 64, 360, 620), sh = 40;
-    int confirm_x = sx, confirm_y = sy + g_char_count * (sh + 6) + 10; // place confirm below list
+    int card_x[MAX_GLOBAL_CHARS] = {0};
+    int card_y[MAX_GLOBAL_CHARS] = {0};
+    int card_w[MAX_GLOBAL_CHARS] = {0};
+    int card_h[MAX_GLOBAL_CHARS] = {0};
+    int confirm_x = g_main_x + 24, confirm_y = bottom_button_y();
     int selected_idx = -1;
+    int hover_idx = -1;
+    int hover_confirm = 0;
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
             reset_draw_y();
+            draw_simple_status_bar("Character Draft");
             draw_team_hp_panel(NULL); // keep HP panel intact; callers render full state before calling select
+            snprintf(buf, sizeof(buf), "Player %d - Character slot %d", player_id, slot_number);
+            draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, buf);
+            g_draw_y += 36;
+            int start_y = g_draw_y + 8;
+            confirm_x = g_main_x + 24;
+            confirm_y = bottom_button_y();
+            compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
             for (int i = 0; i < g_char_count; i++) {
-                char tmp[256]; snprintf(tmp, sizeof(tmp), "[%2d] %s (ID:%d) HP:%d Speed:%d", i, g_all_characters[i].name, g_all_characters[i].char_id, g_all_characters[i].max_hp, g_all_characters[i].speed);
-                if (i == selected_idx) draw_button_with_check(sx, sy + i * (sh + 6), sw, sh, tmp);
-                else draw_button(sx, sy + i * (sh + 6), sw, sh, tmp);
+                draw_character_option_panel(&g_all_characters[i], i, card_x[i], card_y[i], card_w[i], card_h[i], i == selected_idx, hover_idx == i, 0);
             }
-            draw_button(confirm_x, confirm_y, 120, 40, "Confirm");
+            draw_button_state(confirm_x, confirm_y, 140, 40, "Confirm", selected_idx >= 0, hover_confirm, 0);
             need_redraw = 0;
         }
 
@@ -1863,11 +2021,24 @@ single_character_select:
             continue;
         }
         if (layout_changed_since(&layout_version)) goto single_character_select;
+        int new_hover_idx = -1;
+        int new_hover_confirm = 0;
+        for (int i = 0; i < g_char_count; i++) {
+            if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
+                new_hover_idx = i;
+                break;
+            }
+        }
+        if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) new_hover_confirm = 1;
+        if (new_hover_idx != hover_idx || new_hover_confirm != hover_confirm) {
+            hover_idx = new_hover_idx;
+            hover_confirm = new_hover_confirm;
+            need_redraw = 1;
+        }
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
-                int rx = sx, ry = sy + i * (sh + 6);
-                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) {
+                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                     selected_idx = i;
                     need_redraw = 1;
                     handled = 1;
@@ -1875,12 +2046,10 @@ single_character_select:
                 }
             }
             // confirm button
-            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 120, 40)) {
+            if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
                 if (selected_idx >= 0) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_characters[selected_idx].name); draw_overlay_message(chosen);
                     return selected_idx;
                 } else {
-                    draw_overlay_message("No character selected");
                     need_redraw = 1;
                 }
             }
@@ -1908,8 +2077,11 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* st, int max_s
 multi_character_select:
     int layout_version = g_ui_layout_version;
     if (g_char_count == 0) { draw_line("Global character pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int sx = g_main_x + 24, sy = g_main_y + 128, sw = clamp_int(g_main_w - 64, 360, 680), sh = 58;
-    int confirm_x = sx, confirm_y = bottom_button_y();
+    int card_x[MAX_GLOBAL_CHARS] = {0};
+    int card_y[MAX_GLOBAL_CHARS] = {0};
+    int card_w[MAX_GLOBAL_CHARS] = {0};
+    int card_h[MAX_GLOBAL_CHARS] = {0};
+    int confirm_x = g_main_x + 24, confirm_y = bottom_button_y();
     int* selected = (int*)malloc(sizeof(int) * g_char_count);
     memset(selected, 0, sizeof(int) * g_char_count);
     int hover_idx = -1;
@@ -1927,14 +2099,13 @@ multi_character_select:
             g_draw_y += 34;
             snprintf(header, sizeof(header), "Choose up to %d", max_select);
             draw_line(header);
-            sx = g_main_x + 24; sy = g_draw_y + 8; sw = clamp_int(g_main_w - 64, 360, 680); sh = 58;
-            confirm_x = sx; confirm_y = bottom_button_y();
+            confirm_x = g_main_x + 24; confirm_y = bottom_button_y();
+            compute_card_grid_rects(g_char_count, g_draw_y + 8, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
             begin_deferred_present();
             for (int i = 0; i < g_char_count; i++) {
-                draw_character_option_panel(&g_all_characters[i], i, sx, sy + i * (sh + UI_GAP), sw, sh, selected[i], hover_idx == i, 0);
+                draw_character_option_panel(&g_all_characters[i], i, card_x[i], card_y[i], card_w[i], card_h[i], selected[i], hover_idx == i, 0);
             }
             draw_button_state(confirm_x, confirm_y, 140, 40, "Confirm", 0, hover_confirm, 0);
-            draw_overlay_message_kind("Select characters for your team.", UI_MSG_HINT);
             end_deferred_present();
             need_redraw = 0;
         }
@@ -1953,8 +2124,7 @@ multi_character_select:
         int new_hover_idx = -1;
         int new_hover_confirm = 0;
         for (int i = 0; i < g_char_count; i++) {
-            int ry = sy + i * (sh + UI_GAP);
-            if (point_in_rect(m.x, m.y, sx, ry, sw, sh)) {
+            if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                 new_hover_idx = i;
                 break;
             }
@@ -1968,8 +2138,7 @@ multi_character_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
-                int rx = sx, ry = sy + i * (sh + UI_GAP);
-                if (point_in_rect(m.x, m.y, rx, ry, sw, sh)) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
+                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
             }
             if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
                 int count = 0;

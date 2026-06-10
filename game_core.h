@@ -95,6 +95,8 @@ typedef struct {
 typedef struct {
     Action action;
     int player_id;
+    Card played_card;
+    int has_played_card;
     char summary[MAX_ACTION_SUMMARY_LEN];
 } ActionRecord;
 

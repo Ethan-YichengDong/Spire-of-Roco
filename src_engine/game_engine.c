@@ -383,6 +383,14 @@ static void CollectPlayerPlan(GameState* round_start, int player_id, int mode, A
 
         out_records[count].action = action;
         out_records[count].player_id = player_id;
+        memset(&out_records[count].played_card, 0, sizeof(out_records[count].played_card));
+        out_records[count].has_played_card = 0;
+        if (action.type == ACTION_PLAY_CARD &&
+            action.card_hand_idx >= 0 &&
+            action.card_hand_idx < player->hand_count) {
+            out_records[count].played_card = player->hand[action.card_hand_idx];
+            out_records[count].has_played_card = 1;
+        }
         BuildActionSummary(&planning, action, player_id,
                            out_records[count].summary,
                            sizeof(out_records[count].summary));
