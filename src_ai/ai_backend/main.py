@@ -59,8 +59,9 @@ def start_server():
                     print(f"接收到新的游戏对战状态: {state_dict}")
                     
                     # 经过特定的逻辑处理模块（或大型模型）进行决策生成
-                    action = process_game_state(state_dict)
-                    append_decision_log(state_dict, action, policy=os.getenv('ROCO_AI_POLICY', 'heuristic'))
+                    request_policy = state_dict.get("ai_policy") or os.getenv('ROCO_AI_POLICY', 'heuristic')
+                    action = process_game_state(state_dict, policy=request_policy)
+                    append_decision_log(state_dict, action, policy=request_policy)
                     
                     # 将决策转换为 JSON 字符串结构并编码发送回 C 游戏引擎
                     response_json = json.dumps(action, ensure_ascii=False)

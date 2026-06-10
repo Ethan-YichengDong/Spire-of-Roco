@@ -2,6 +2,7 @@
 #include "../src_data/data_manager.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void InitGUI() {
     printf("\n======================================================\n");
@@ -175,6 +176,14 @@ MenuSelection ShowMainMenu(void) {
 
     printf("[CLI] Defaulting to PvP mode.\n");
     return MENU_PVP;
+}
+
+AiPolicy ShowAIPolicyMenu(void) {
+    const char* raw = getenv("ROCO_AI_POLICY");
+    if (raw != NULL && strcmp(raw, "random") == 0) return AI_POLICY_RANDOM;
+    if (raw != NULL && strcmp(raw, "hard") == 0) return AI_POLICY_HARD;
+    if (raw != NULL && strcmp(raw, "llm") == 0) return AI_POLICY_LLM;
+    return AI_POLICY_HEURISTIC;
 }
 
 int ShowCreditsScreenFromFile(const char* path) {

@@ -763,7 +763,7 @@ def process_game_state_easy(state_dict: dict) -> dict:
     seed = os.getenv("ROCO_AI_RANDOM_SEED")
     rng = random.Random(int(seed)) if seed and seed.isdigit() else random
     action = dict(rng.choice(candidates))
-    action["debug_reason"] = "easy_random_legal_action"
+    action["debug_reason"] = "random_legal_action"
     return action
 
 
@@ -1114,9 +1114,10 @@ def append_decision_log(state_dict: dict, action: dict, policy: str | None = Non
 
 
 def process_game_state(state_dict: dict, policy: str | None = None) -> dict:
-    selected_policy = (policy or os.getenv("ROCO_AI_POLICY", DEFAULT_AI_POLICY)).strip().lower()
+    request_policy = state_dict.get("ai_policy") if isinstance(state_dict, dict) else None
+    selected_policy = (policy or request_policy or os.getenv("ROCO_AI_POLICY", DEFAULT_AI_POLICY)).strip().lower()
 
-    if selected_policy in ("easy", "casual"):
+    if selected_policy in ("random", "easy", "casual"):
         return process_game_state_easy(state_dict)
 
     if selected_policy in ("hard", "expert"):

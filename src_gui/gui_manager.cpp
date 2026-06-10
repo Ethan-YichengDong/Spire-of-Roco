@@ -1176,6 +1176,37 @@ static void draw_main_menu_screen(MenuSelection hover_choice) {
     end_deferred_present();
 }
 
+static const char* ai_policy_label(AiPolicy policy) {
+    switch (policy) {
+        case AI_POLICY_RANDOM: return "Random";
+        case AI_POLICY_HARD: return "Hard";
+        case AI_POLICY_LLM: return "LLM";
+        case AI_POLICY_HEURISTIC:
+        default: return "Heuristic";
+    }
+}
+
+static void draw_ai_policy_menu_screen(AiPolicy hover_policy, int hover_back) {
+    begin_deferred_present();
+    reset_draw_y();
+    draw_simple_status_bar("AI Difficulty");
+    int menu_w = clamp_int(g_main_w / 2, 340, 500);
+    int bx = g_main_x + (g_main_w - menu_w) / 2;
+    int by = g_main_y + clamp_int(g_main_h / 7, 48, 96);
+    int bh = 54;
+    int gap = 68;
+    settextstyle_utf8(32, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(26, 36, 45));
+    outtextxy_clipped_utf8(g_main_x + UI_PAD, by - 62, g_main_w - (UI_PAD * 2), "Choose AI Difficulty");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    draw_menu_button(bx, by, menu_w, bh, ai_policy_label(AI_POLICY_HEURISTIC), hover_policy == AI_POLICY_HEURISTIC);
+    draw_menu_button(bx, by + gap, menu_w, bh, ai_policy_label(AI_POLICY_RANDOM), hover_policy == AI_POLICY_RANDOM);
+    draw_menu_button(bx, by + gap * 2, menu_w, bh, ai_policy_label(AI_POLICY_HARD), hover_policy == AI_POLICY_HARD);
+    draw_menu_button(bx, by + gap * 3, menu_w, bh, ai_policy_label(AI_POLICY_LLM), hover_policy == AI_POLICY_LLM);
+    draw_button_state(g_main_x + 24, bottom_button_y(), 140, 40, "Back", 0, hover_back, 0);
+    end_deferred_present();
+}
+
 static std::string read_text_file_utf8(const char* path) {
     if (!path) return std::string();
     FILE* fp = fopen(path, "rb");
@@ -2567,6 +2598,63 @@ main_menu:
     const char* raw = getenv("ROCO_GAME_MODE");
     if (raw != NULL && raw[0] == '1') return MENU_PVE;
     return MENU_PVP;
+#endif
+}
+
+AiPolicy ShowAIPolicyMenu(void) {
+#ifdef USE_EASYX
+ai_policy_menu:
+    int layout_version = g_ui_layout_version;
+    AiPolicy hover_policy = AI_POLICY_NONE;
+    int hover_back = 0;
+    int need_redraw = 1;
+    MOUSEMSG m;
+    while (1) {
+        if (need_redraw) {
+            draw_ai_policy_menu_screen(hover_policy, hover_back);
+            need_redraw = 0;
+        }
+
+        if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return AI_POLICY_NONE;
+            if (layout_changed_since(&layout_version)) goto ai_policy_menu;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto ai_policy_menu;
+
+        int menu_w = clamp_int(g_main_w / 2, 340, 500);
+        int bx = g_main_x + (g_main_w - menu_w) / 2;
+        int by = g_main_y + clamp_int(g_main_h / 7, 48, 96);
+        int bh = 54;
+        int gap = 68;
+        int back_x = g_main_x + 24;
+        int back_y = bottom_button_y();
+        AiPolicy new_hover_policy = AI_POLICY_NONE;
+        int new_hover_back = 0;
+
+        if (point_in_rect(m.x, m.y, bx, by, menu_w, bh)) new_hover_policy = AI_POLICY_HEURISTIC;
+        else if (point_in_rect(m.x, m.y, bx, by + gap, menu_w, bh)) new_hover_policy = AI_POLICY_RANDOM;
+        else if (point_in_rect(m.x, m.y, bx, by + gap * 2, menu_w, bh)) new_hover_policy = AI_POLICY_HARD;
+        else if (point_in_rect(m.x, m.y, bx, by + gap * 3, menu_w, bh)) new_hover_policy = AI_POLICY_LLM;
+        else if (point_in_rect(m.x, m.y, back_x, back_y, 140, 40)) new_hover_back = 1;
+
+        if (new_hover_policy != hover_policy || new_hover_back != hover_back) {
+            hover_policy = new_hover_policy;
+            hover_back = new_hover_back;
+            need_redraw = 1;
+        }
+
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            if (hover_back) return AI_POLICY_NONE;
+            if (hover_policy != AI_POLICY_NONE) return hover_policy;
+        }
+    }
+#else
+    const char* raw = getenv("ROCO_AI_POLICY");
+    if (raw && strcmp(raw, "random") == 0) return AI_POLICY_RANDOM;
+    if (raw && strcmp(raw, "hard") == 0) return AI_POLICY_HARD;
+    if (raw && strcmp(raw, "llm") == 0) return AI_POLICY_LLM;
+    return AI_POLICY_HEURISTIC;
 #endif
 }
 

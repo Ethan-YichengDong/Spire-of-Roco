@@ -32,6 +32,14 @@ typedef enum {
     MENU_EXIT
 } MenuSelection;
 
+typedef enum {
+    AI_POLICY_NONE = -1,
+    AI_POLICY_HEURISTIC = 0,
+    AI_POLICY_RANDOM,
+    AI_POLICY_HARD,
+    AI_POLICY_LLM
+} AiPolicy;
+
 // 游戏模式常量
 #define MODE_PVP 0   // 本地双人对战，P2由人工输�?
 #define MODE_PVE 1   // 人机对战，P2通过Socket桥接调用AI后端

@@ -32,6 +32,26 @@ static const char* ActionName(ActionType type) {
     }
 }
 
+static const char* AIPolicyName(AiPolicy policy) {
+    switch (policy) {
+        case AI_POLICY_RANDOM: return "random";
+        case AI_POLICY_HARD: return "hard";
+        case AI_POLICY_LLM: return "llm";
+        case AI_POLICY_HEURISTIC:
+        default: return "heuristic";
+    }
+}
+
+#ifndef USE_EASYX
+static AiPolicy ParseAIPolicyName(const char* raw) {
+    if (raw == NULL || raw[0] == '\0') return AI_POLICY_HEURISTIC;
+    if (strcmp(raw, "random") == 0 || strcmp(raw, "easy") == 0) return AI_POLICY_RANDOM;
+    if (strcmp(raw, "hard") == 0 || strcmp(raw, "expert") == 0) return AI_POLICY_HARD;
+    if (strcmp(raw, "llm") == 0 || strcmp(raw, "ollama") == 0 || strcmp(raw, "model") == 0) return AI_POLICY_LLM;
+    return AI_POLICY_HEURISTIC;
+}
+#endif
+
 static void EnsureLogDirExists(void) {
     _mkdir("logs");
 }
@@ -570,10 +590,11 @@ static int BuildDeckPhase(Player* player, int player_id, int mode) {
 }
 
 // 鎵ц骞剁鐞嗘父鎴忔牳蹇冨惊鐜?
-static int RunBattleLoop(int mode) {
+static int RunBattleLoop(int mode, AiPolicy ai_policy) {
     GameState state;
 
     ClearReturnToMenuRequest();
+    SetAIBackendPolicy(AIPolicyName(ai_policy));
     memset(&state, 0, sizeof(GameState));
     srand((unsigned int)time(NULL));
 
@@ -599,6 +620,9 @@ static int RunBattleLoop(int mode) {
         printf("[Engine] Smoke-test max rounds: %d\n", max_rounds);
     }
     printf("Game mode: %s\n", (mode == MODE_PVP) ? "Local PvP" : "PvE");
+    if (mode == MODE_PVE) {
+        printf("AI policy: %s\n", AIPolicyName(ai_policy));
+    }
 
     // ================================================================
     //  鍦烘櫙浜岋細SCENE_DRAFT 鈥?闃熶紞閫夋嫨涓庣墝搴撴瀯绛?
@@ -738,9 +762,10 @@ void RunGameLoop() {
 #ifndef USE_EASYX
     int env_mode = ReadEnvInt("ROCO_GAME_MODE", -1, -1, 1);
     if (env_mode >= 0) {
+        AiPolicy env_policy = ParseAIPolicyName(getenv("ROCO_AI_POLICY"));
         printf("[Engine] Using mode selected by environment: %s\n",
                env_mode == MODE_PVP ? "Local PvP" : "PvE");
-        RunBattleLoop(env_mode);
+        RunBattleLoop(env_mode, env_policy);
         CloseGUI();
         return;
     }
@@ -750,7 +775,7 @@ void RunGameLoop() {
         ClearReturnToMenuRequest();
         MenuSelection selection = ShowMainMenu();
         if (selection == MENU_PVP) {
-            RunBattleLoop(MODE_PVP);
+            RunBattleLoop(MODE_PVP, AI_POLICY_HEURISTIC);
 #ifdef USE_EASYX
             continue;
 #else
@@ -758,7 +783,12 @@ void RunGameLoop() {
 #endif
         }
         if (selection == MENU_PVE) {
-            RunBattleLoop(MODE_PVE);
+            AiPolicy ai_policy = ShowAIPolicyMenu();
+            if (ai_policy == AI_POLICY_NONE) {
+                continue;
+            }
+            ClearReturnToMenuRequest();
+            RunBattleLoop(MODE_PVE, ai_policy);
 #ifdef USE_EASYX
             continue;
 #else

@@ -23,6 +23,18 @@
 #define AI_PORT 8888
 #define AI_SOCKET_TIMEOUT_MS 1000
 
+static char g_ai_policy[32] = "heuristic";
+
+void SetAIBackendPolicy(const char* policy) {
+    if (!policy || policy[0] == '\0') {
+        strncpy(g_ai_policy, "heuristic", sizeof(g_ai_policy) - 1);
+        g_ai_policy[sizeof(g_ai_policy) - 1] = '\0';
+        return;
+    }
+    strncpy(g_ai_policy, policy, sizeof(g_ai_policy) - 1);
+    g_ai_policy[sizeof(g_ai_policy) - 1] = '\0';
+}
+
 typedef SOCKET RocoSocket;
 
 static void cleanup_winsock(void) {
@@ -247,7 +259,7 @@ static int send_all(RocoSocket sock, const char* data, size_t len) {
 
 // 降级策略（Fallback）：基于硬编码规则的本地 AI，防止 Python 服务端断开时闪退或卡死
 static Action FallbackAI(GameState state, int ai_player_id) {
-    printf("[AI Bridge] Backend unavailable or timed out. Falling back to local rule-based AI.\n");
+    printf("[AI Bridge] Backend unavailable or timed out. Falling back to local %s AI.\n", g_ai_policy);
     Action act = {0};
     act.actor_id = ai_player_id;
     
@@ -258,6 +270,48 @@ static Action FallbackAI(GameState state, int ai_player_id) {
     Character* active_char = &ai_p->team[active_idx];
 
     // 简单决定逻辑：如果角色血量 < 30，优先找防御/Buff卡打出，否则打出第一张能买得起的卡
+    if (strcmp(g_ai_policy, "random") == 0 && hand_count > 0) {
+        int playable[MAX_HAND_SIZE];
+        int playable_count = 0;
+        for (int i = 0; i < hand_count && playable_count < MAX_HAND_SIZE; i++) {
+            if (ai_p->energy >= ai_p->hand[i].energy_cost) {
+                playable[playable_count++] = i;
+            }
+        }
+        if (playable_count > 0) {
+            int idx = playable[rand() % playable_count];
+            act.type = ACTION_PLAY_CARD;
+            act.card_hand_idx = idx;
+            act.switch_to_idx = -1;
+            act.target_idx = get_default_target_idx_for_card(&ai_p->hand[idx], ai_p, opp_p, INT_MIN);
+            return act;
+        }
+    }
+
+    if (strcmp(g_ai_policy, "hard") == 0 && active_char->hp > 0 && hand_count > 0) {
+        int best_idx = -1;
+        int best_score = -999999;
+        for (int i = 0; i < hand_count; i++) {
+            Card* card = &ai_p->hand[i];
+            if (ai_p->energy < card->energy_cost) continue;
+            int score = card->base_damage * 3 + card->base_defense * 2 + card->base_heal * 2;
+            if (card->buff_effect != BUFF_NONE) score += 10 + card->buff_value + card->buff_duration;
+            if (active_char->hp < active_char->max_hp / 3 && card->type != CARD_TYPE_ATTACK) score += 20;
+            score -= card->energy_cost;
+            if (score > best_score) {
+                best_score = score;
+                best_idx = i;
+            }
+        }
+        if (best_idx >= 0) {
+            act.type = ACTION_PLAY_CARD;
+            act.card_hand_idx = best_idx;
+            act.switch_to_idx = -1;
+            act.target_idx = get_default_target_idx_for_card(&ai_p->hand[best_idx], ai_p, opp_p, INT_MIN);
+            return act;
+        }
+    }
+
     if (active_char->hp > 0 && hand_count > 0) {
         for (int i = 0; i < hand_count; i++) {
             if (ai_p->energy >= ai_p->hand[i].energy_cost) {
@@ -344,11 +398,12 @@ static void SerializeGameState(GameState state, int ai_player_id, char* buffer, 
     buffer[0] = '\0';
     append_fmt(buffer, buffer_size, &offset,
                "{\"schema_version\":1,\"turn_model\":\"sequential\","
-               "\"ai_player_id\":%d,\"round_count\":%d,\"current_turn\":%d,"
+               "\"ai_player_id\":%d,\"ai_policy\":\"%s\","
+               "\"round_count\":%d,\"current_turn\":%d,"
                "\"game_stage\":%d,\"current_scene\":%d,"
                "\"target_protocol\":{\"enemy_single\":\"0-2\",\"self_single\":\"10-12\","
                "\"enemy_all\":-1,\"self_all\":-2},\"players\":{\"self\":",
-               ai_player_id, state.round_count, state.current_turn,
+               ai_player_id, g_ai_policy, state.round_count, state.current_turn,
                state.game_stage, state.current_scene);
     append_player_json(buffer, buffer_size, &offset, ai_p);
     append_fmt(buffer, buffer_size, &offset, ",\"opponent\":");
