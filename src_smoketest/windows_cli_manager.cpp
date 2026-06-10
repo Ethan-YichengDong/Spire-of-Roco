@@ -15,6 +15,13 @@ void CloseGUI() {
     printf("======================================================\n");
 }
 
+void ClearReturnToMenuRequest(void) {
+}
+
+int IsReturnToMenuRequested(void) {
+    return 0;
+}
+
 void RenderGameBoard(GameState state) {
     printf("\n------ [Current Board] ------\n");
     printf("Round: %d\n", state.round_count);
@@ -33,7 +40,7 @@ void RenderGameBoard(GameState state) {
 }
 
 void ShowTurnTransitionMask(int player_id) {
-    printf("\n>>> [Flow] Entering player %d turn. Smoke test auto-confirms transition.\n", player_id);
+    (void)player_id;
 }
 
 Action GetHumanInputFromUI(int player_id, GameState state) {
@@ -155,12 +162,22 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 }
 
 int GetModeSelectionFromUI() {
+    MenuSelection selection = ShowMainMenu();
+    return selection == MENU_PVE ? MODE_PVE : MODE_PVP;
+}
+
+MenuSelection ShowMainMenu(void) {
     const char* raw = getenv("ROCO_GAME_MODE");
     if (raw != NULL && raw[0] == '1') {
         printf("[CLI] Environment selected PvE mode.\n");
-        return MODE_PVE;
+        return MENU_PVE;
     }
 
     printf("[CLI] Defaulting to PvP mode.\n");
-    return MODE_PVP;
+    return MENU_PVP;
+}
+
+int ShowCreditsScreenFromFile(const char* path) {
+    printf("[CLI] Credits screen skipped: %s\n", path ? path : "docs/credits.txt");
+    return 1;
 }

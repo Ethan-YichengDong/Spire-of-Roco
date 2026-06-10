@@ -1,0 +1,18 @@
+Spire of Roco
+
+Credits
+
+Game Design:
+Ethan-YichengDong
+
+Programming:
+Spire of Roco Contributors
+
+Art:
+Placeholder UI graphics and temporary interface assets
+
+Special Thanks:
+Players, testers, and everyone who supports the project
+
+Encoding:
+Please save this file as UTF-8.

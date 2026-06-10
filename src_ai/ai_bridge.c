@@ -247,7 +247,7 @@ static int send_all(RocoSocket sock, const char* data, size_t len) {
 
 // 降级策略（Fallback）：基于硬编码规则的本地 AI，防止 Python 服务端断开时闪退或卡死
 static Action FallbackAI(GameState state, int ai_player_id) {
-    printf("[AI Bridge] 后台连接失败或超时，降级至基于本地规则的本地 AI。\n");
+    printf("[AI Bridge] Backend unavailable or timed out. Falling back to local rule-based AI.\n");
     Action act = {0};
     act.actor_id = ai_player_id;
     
@@ -367,7 +367,7 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
     SerializeGameState(state, ai_player_id, json_payload, sizeof(json_payload));
 
     if (ensure_winsock_started() < 0) {
-        printf("[AI Bridge] Winsock 初始化失败。\n");
+        printf("[AI Bridge] Winsock initialization failed.\n");
         return FallbackAI(state, ai_player_id);
     }
 
@@ -375,13 +375,13 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
 
     sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock == INVALID_SOCKET) {
-        printf("[AI Bridge] Socket 建立失败。\n");
+        printf("[AI Bridge] Socket creation failed.\n");
         return FallbackAI(state, ai_player_id);
     }
 
     // 设置 1 秒的通信超时机制，防止 Python 服务端未启动导致整个游戏 C 进程被锁死
     if (set_ai_socket_timeout(sock, AI_SOCKET_TIMEOUT_MS) < 0) {
-        printf("[AI Bridge] Socket 超时设置失败。\n");
+        printf("[AI Bridge] Failed to configure socket timeout.\n");
         close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
@@ -397,14 +397,14 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
     }
 
     if (connect(sock, (struct sockaddr *)&serv_addr, (int)sizeof(serv_addr)) == SOCKET_ERROR) {
-        printf("[AI Bridge] 连接至 Python AI 后端失败。\n");
+        printf("[AI Bridge] Failed to connect to Python AI backend.\n");
         close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
 
     // 发送游戏当前状态
     if (send_all(sock, json_payload, strlen(json_payload)) < 0) {
-        printf("[AI Bridge] 发送 Socket 消息失败。\n");
+        printf("[AI Bridge] Failed to send socket message.\n");
         close_ai_socket(sock);
         return FallbackAI(state, ai_player_id);
     }
@@ -416,7 +416,7 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
 
     // 处理通信超时或接收失败的场景
     if (valread <= 0) {
-        printf("[AI Bridge] 接收 Socket 消息超时或断开。\n");
+        printf("[AI Bridge] Socket receive timed out or disconnected.\n");
         return FallbackAI(state, ai_player_id);
     }
     buffer[valread] = '\0';
@@ -428,7 +428,7 @@ Action GetAIActionFromBackend(GameState state, int ai_player_id) {
     int type = 0, card_idx = -1, switch_idx = -1, target_idx = INT_MIN;
 
     if (!parse_json_int(buffer, "type", &type)) {
-        printf("[AI Bridge] 收到来自 AI 后端的非法 JSON 格式反馈数据。\n");
+        printf("[AI Bridge] Received invalid JSON from AI backend.\n");
         return FallbackAI(state, ai_player_id);
     }
 

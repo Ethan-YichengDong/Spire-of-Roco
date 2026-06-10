@@ -1,4 +1,4 @@
-#include "game_engine.h"
+﻿#include "game_engine.h"
 #include "../src_gui/gui_manager.h"
 #include "../src_data/battle_calculator.h"
 #include "../src_data/data_manager.h"
@@ -51,14 +51,14 @@ static void OpenBattleLog(void) {
 
     g_battle_log = fopen(path, "w");
     if (g_battle_log == NULL) {
-        printf("[LOG] 无法创建战斗日志文件: %s\n", path);
+        printf("[LOG] Failed to create battle log file: %s\n", path);
         return;
     }
 
     fprintf(g_battle_log, "Spire of Roco Battle Log\n");
     fprintf(g_battle_log, "log_file=%s\n\n", path);
     fflush(g_battle_log);
-    printf("[LOG] 战斗日志已写入: %s\n", path);
+    printf("[LOG] Battle log written to: %s\n", path);
 }
 
 static void CloseBattleLog(void) {
@@ -203,30 +203,30 @@ static Action NormalizeActionForCurrentState(GameState* state, Action action, in
     return action;
 }
 
-// 获取玩家2的行动，基于选择的游戏模式
+// 鑾峰彇鐜╁2鐨勮鍔紝鍩轰簬閫夋嫨鐨勬父鎴忔ā寮?
 Action GetPlayer2Action(GameState state, int mode) {
     if (mode == MODE_PVP) {
-        // 本地 PvP 模式：接收玩家2的人工输入
+        // 鏈湴 PvP 妯″紡锛氭帴鏀剁帺瀹?鐨勪汉宸ヨ緭鍏?
         return GetHumanInputFromUI(2, state);
     } else {
-        // MODE_PVE：通过 Socket 桥连调用 AI 后台来生成行动
+        // MODE_PVE锛氶€氳繃 Socket 妗ヨ繛璋冪敤 AI 鍚庡彴鏉ョ敓鎴愯鍔?
         return GetAIActionFromBackend(state, 2);
     }
 }
 
-// 回合内循环：允许同一玩家连续出牌，直到能量耗尽或主动结束回合
+// 鍥炲悎鍐呭惊鐜細鍏佽鍚屼竴鐜╁杩炵画鍑虹墝锛岀洿鍒拌兘閲忚€楀敖鎴栦富鍔ㄧ粨鏉熷洖鍚?
 #if 0
 static void PlayerTurnLoop(GameState* state, int player_id, int mode) {
     Player* player = (player_id == 1) ? &state->p1 : &state->p2;
 
     while (player->hand_count > 0) {
-        // 若己方出战角色阵亡，自动切换到队伍中下一个存活角色
+        // 鑻ュ繁鏂瑰嚭鎴樿鑹查樀浜★紝鑷姩鍒囨崲鍒伴槦浼嶄腑涓嬩竴涓瓨娲昏鑹?
         if (!player->team[player->active_idx].is_alive) {
             remove_dead_from_team(player, player->active_idx);
             if (!player->team[player->active_idx].is_alive) break;
         }
 
-        // 检查是否还有足够的能量打出任意一张手牌
+        // 妫€鏌ユ槸鍚﹁繕鏈夎冻澶熺殑鑳介噺鎵撳嚭浠绘剰涓€寮犳墜鐗?
         int can_act = 0;
         for (int i = 0; i < player->hand_count; i++) {
             if (player->energy >= player->hand[i].energy_cost) {
@@ -349,6 +349,7 @@ static void CollectPlayerPlan(GameState* round_start, int player_id, int mode, A
     ReplayPlannedPrefix(&planning, round_start, out_records, 0);
 
     while (count < MAX_TURN_ACTIONS) {
+        if (IsReturnToMenuRequested()) break;
         Player* player = (player_id == 1) ? &planning.p1 : &planning.p2;
         if (!PlayerHasAliveCharacter(player)) break;
         if (!player->team[player->active_idx].is_alive) {
@@ -364,6 +365,7 @@ static void CollectPlayerPlan(GameState* round_start, int player_id, int mode, A
         } else {
             action = GetPlannedInputFromUI(player_id, planning, out_records, count, &edit_index);
         }
+        if (IsReturnToMenuRequested()) break;
 
         if (action.type == ACTION_EDIT_STEP) {
             if (edit_index >= 0 && edit_index < count) {
@@ -402,21 +404,21 @@ static void CollectPlayerPlan(GameState* round_start, int player_id, int mode, A
     *out_count = count;
 }
 
-static void ResolveOneRecord(GameState* state, ActionRecord* record, int step_number, int step_total) {
+static int ResolveOneRecord(GameState* state, ActionRecord* record, int step_number, int step_total) {
     Player* acting = (record->player_id == 1) ? &state->p1 : &state->p2;
-    if (!PlayerHasAliveCharacter(acting)) return;
+    if (!PlayerHasAliveCharacter(acting)) return 0;
     if (!acting->team[acting->active_idx].is_alive) {
         remove_dead_from_team(acting, acting->active_idx);
     }
-    if (!PlayerHasAliveCharacter(acting)) return;
+    if (!PlayerHasAliveCharacter(acting)) return 0;
 
     if (!HasExplicitSingleTarget(state, record->action, record->player_id)) {
         printf("[Engine] Skipped incomplete recorded card action from P%d.\n", record->player_id);
-        return;
+        return 0;
     }
 
     Action action = NormalizeActionForCurrentState(state, record->action, record->player_id);
-    if (action.type == ACTION_END_TURN || action.type == ACTION_NONE) return;
+    if (action.type == ACTION_END_TURN || action.type == ACTION_NONE) return 0;
 
     if (g_battle_log != NULL) {
         fprintf(g_battle_log, "\n[ResolvedAction]\n");
@@ -426,7 +428,19 @@ static void ResolveOneRecord(GameState* state, ActionRecord* record, int step_nu
     ResolutionReport report;
     ExecuteActionWithReport(state, &action, record->player_id, &report);
     LogGameState("AfterResolvedAction", state);
-    ShowResolutionStep(*state, record, &report, step_number, step_total);
+    if (action.type == ACTION_PLAY_CARD) {
+        ShowResolutionStep(*state, record, &report, step_number, step_total);
+        return 1;
+    }
+    return 0;
+}
+
+static int CountCardRecords(const ActionRecord* records, int record_count) {
+    int count = 0;
+    for (int i = 0; i < record_count; i++) {
+        if (records[i].action.type == ACTION_PLAY_CARD) count++;
+    }
+    return count;
 }
 
 static void ResolvePlannedRound(GameState* state,
@@ -440,42 +454,31 @@ static void ResolvePlannedRound(GameState* state,
     int first_count = (first_player_id == 1) ? p1_count : p2_count;
     int second_count = (first_player_id == 1) ? p2_count : p1_count;
     int second_player_id = (first_player_id == 1) ? 2 : 1;
-    int total_steps = first_count + second_count;
+    int total_steps = CountCardRecords(first_records, first_count) + CountCardRecords(second_records, second_count);
     int step = 1;
 
-    if (total_steps <= 0) {
-        ShowResolutionStep(*state, NULL, NULL, 1, 1);
-        return;
-    }
-
     for (int i = 0; i < first_count; i++) {
-        ResolveOneRecord(state, &first_records[i], step++, total_steps);
+        if (ResolveOneRecord(state, &first_records[i], step, total_steps)) step++;
     }
 
     Player* second_player = (second_player_id == 1) ? &state->p1 : &state->p2;
     if (!PlayerHasAliveCharacter(second_player)) {
-        ActionRecord skipped;
-        memset(&skipped, 0, sizeof(skipped));
-        skipped.player_id = second_player_id;
-        skipped.action.type = ACTION_NONE;
-        snprintf(skipped.summary, sizeof(skipped.summary),
-                 "P%d is defeated; remaining actions skipped", second_player_id);
-        ShowResolutionStep(*state, &skipped, NULL, step, total_steps);
         return;
     }
 
     for (int i = 0; i < second_count; i++) {
-        ResolveOneRecord(state, &second_records[i], step++, total_steps);
+        if (ResolveOneRecord(state, &second_records[i], step, total_steps)) step++;
         if (!PlayerHasAliveCharacter(second_player)) break;
     }
 }
 
 // ============================================================
-//  选角阶段：为指定玩家填充3个角色（不重复）
+//  閫夎闃舵锛氫负鎸囧畾鐜╁濉厖3涓鑹诧紙涓嶉噸澶嶏級
 // ============================================================
-static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* state) {
+static int SelectTeamPhase(Player* player, int player_id, int mode, GameState* state) {
     int slot = 0;
     while (slot < TEAM_SIZE) {
+        if (IsReturnToMenuRequested()) return 1;
         int picks[TEAM_SIZE]; int pick_count = 0;
         if (player_id == 2 && mode == MODE_PVE) {
             // PvE mode: AI fills remaining slots
@@ -488,6 +491,7 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
         } else {
             // Allow player to select multiple characters at once
             pick_count = SelectMultipleCharactersFromUI(player_id, state, TEAM_SIZE - slot, picks, &pick_count);
+            if (IsReturnToMenuRequested()) return 1;
         }
 
         if (pick_count <= 0) {
@@ -513,16 +517,19 @@ static void SelectTeamPhase(Player* player, int player_id, int mode, GameState* 
         }
 
         RenderGameBoard(*state);
+        if (IsReturnToMenuRequested()) return 1;
     }
 
     player->active_idx = 0;
+    return 0;
 }
 
 // ============================================================
-//  选牌阶段：为指定玩家逐张构筑牌库
+//  閫夌墝闃舵锛氫负鎸囧畾鐜╁閫愬紶鏋勭瓚鐗屽簱
 // ============================================================
-static void BuildDeckPhase(Player* player, int player_id, int mode) {
+static int BuildDeckPhase(Player* player, int player_id, int mode) {
     while (player->draw_count < MAX_DECK_SIZE) {
+        if (IsReturnToMenuRequested()) return 1;
         int picks[MAX_DECK_SIZE]; int pick_count = 0;
         int finalize = 0;
         if (player_id == 2 && mode == MODE_PVE) {
@@ -535,6 +542,7 @@ static void BuildDeckPhase(Player* player, int player_id, int mode) {
         } else {
             // Let player pick multiple cards at once
             int raw_ret = SelectMultipleCardsFromUI(player_id, MAX_DECK_SIZE - player->draw_count, picks, &pick_count);
+            if (IsReturnToMenuRequested()) return 1;
             if (raw_ret < 0) { finalize = 1; pick_count = -raw_ret; }
             else pick_count = raw_ret;
         }
@@ -556,15 +564,16 @@ static void BuildDeckPhase(Player* player, int player_id, int mode) {
         if (finalize) break;
     }
 
-    printf("玩家%d 牌库共 %d 张卡牌\n", player_id, player->draw_count);
+    printf("Player %d deck contains %d cards.\n", player_id, player->draw_count);
     shuffle_draw_pile(player);
+    return 0;
 }
 
-// 执行并管理游戏核心循环
-void RunGameLoop() {
+// 鎵ц骞剁鐞嗘父鎴忔牳蹇冨惊鐜?
+static int RunBattleLoop(int mode) {
     GameState state;
-    int mode;
 
+    ClearReturnToMenuRequest();
     memset(&state, 0, sizeof(GameState));
     srand((unsigned int)time(NULL));
 
@@ -572,64 +581,64 @@ void RunGameLoop() {
     state.current_turn = 1;
     state.p1.player_id = 1;
     state.p2.player_id = 2;
-    strcpy(state.p1.name, "玩家1");
-    strcpy(state.p2.name, "玩家2");
+    strcpy(state.p1.name, "Player 1");
+    strcpy(state.p2.name, "Player 2");
     state.p1.max_energy = 3;
     state.p2.max_energy = 3;
     init_deck(&state.p1);
     init_deck(&state.p2);
 
     // ================================================================
-    //  场景一：SCENE_MENU — 主菜单
+    //  鍦烘櫙涓€锛歋CENE_MENU 鈥?涓昏彍鍗?
     // ================================================================
-    state.current_scene = SCENE_MENU;
-    state.game_stage = 0;
-    InitGUI();
     OpenBattleLog();
     LogGameState("InitialState", &state);
-    RenderGameBoard(state);
-
-    int env_mode = ReadEnvInt("ROCO_GAME_MODE", -1, -1, 1);
-    if (env_mode >= 0) {
-        mode = env_mode;
-        printf("[Engine] 使用环境变量选择模式: %s\n",
-               mode == MODE_PVP ? "本地PvP" : "人机对战(PvE)");
-    } else {
-        mode = GetModeSelectionFromUI();
-    }
 
     int max_rounds = ReadEnvInt("ROCO_SMOKE_MAX_ROUNDS", 0, 0, 10000);
     if (max_rounds > 0) {
-        printf("[Engine] 冒烟最大回合数: %d\n", max_rounds);
+        printf("[Engine] Smoke-test max rounds: %d\n", max_rounds);
     }
-    printf("游戏模式: %s\n", (mode == MODE_PVP) ? "本地PvP" : "人机对战(PvE)");
+    printf("Game mode: %s\n", (mode == MODE_PVP) ? "Local PvP" : "PvE");
 
     // ================================================================
-    //  场景二：SCENE_DRAFT — 队伍选择与牌库构筑
+    //  鍦烘櫙浜岋細SCENE_DRAFT 鈥?闃熶紞閫夋嫨涓庣墝搴撴瀯绛?
     // ================================================================
     state.current_scene = SCENE_DRAFT;
     state.game_stage = 1;
     RenderGameBoard(state);
 
-    printf("\n===== 玩家1 队伍选择 =====\n");
-    SelectTeamPhase(&state.p1, 1, mode, &state);
+    printf("\n===== Player 1 Team Selection =====\n");
+    state.current_turn = 1;
+    if (SelectTeamPhase(&state.p1, 1, mode, &state)) {
+        CloseBattleLog();
+        return 1;
+    }
 
-    ShowTurnTransitionMask(2);
-    printf("\n===== 玩家2 队伍选择 =====\n");
-    SelectTeamPhase(&state.p2, 2, mode, &state);
+    printf("\n===== Player 2 Team Selection =====\n");
+    state.current_turn = 2;
+    if (SelectTeamPhase(&state.p2, 2, mode, &state)) {
+        CloseBattleLog();
+        return 1;
+    }
 
-    printf("\n===== 玩家1 牌库构筑 =====\n");
-    BuildDeckPhase(&state.p1, 1, mode);
+    printf("\n===== Player 1 Deck Build =====\n");
+    state.current_turn = 1;
+    if (BuildDeckPhase(&state.p1, 1, mode)) {
+        CloseBattleLog();
+        return 1;
+    }
 
-    ShowTurnTransitionMask(2);
-    printf("\n===== 玩家2 牌库构筑 =====\n");
-    BuildDeckPhase(&state.p2, 2, mode);
+    printf("\n===== Player 2 Deck Build =====\n");
+    state.current_turn = 2;
+    if (BuildDeckPhase(&state.p2, 2, mode)) {
+        CloseBattleLog();
+        return 1;
+    }
 
     if (state.p1.draw_count == 0 || state.p2.draw_count == 0) {
-        printf("[引擎] 错误: 牌库不能为空，游戏异常退出。\n");
+        printf("[Engine] Error: decks cannot be empty. Aborting game.\n");
         CloseBattleLog();
-        CloseGUI();
-        return;
+        return 0;
     }
 
     draw_card(&state.p1, MAX_HAND_SIZE);
@@ -639,7 +648,7 @@ void RunGameLoop() {
     LogGameState("AfterDraft", &state);
 
     // ================================================================
-    //  场景三：SCENE_BATTLE — 战斗
+    //  鍦烘櫙涓夛細SCENE_BATTLE 鈥?鎴樻枟
     // ================================================================
     state.current_scene = SCENE_BATTLE;
     state.game_stage = 2;
@@ -660,24 +669,40 @@ void RunGameLoop() {
 
         if (p1_first) {
             state.current_turn = 1;
-            ShowTurnTransitionMask(1);
             CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
+            if (IsReturnToMenuRequested()) {
+                CloseBattleLog();
+                return 1;
+            }
 
             state.current_turn = 2;
-            ShowTurnTransitionMask(2);
             CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
+            if (IsReturnToMenuRequested()) {
+                CloseBattleLog();
+                return 1;
+            }
 
             ResolvePlannedRound(&state, 1, p1_records, p1_count, p2_records, p2_count);
         } else {
             state.current_turn = 2;
-            ShowTurnTransitionMask(2);
             CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
+            if (IsReturnToMenuRequested()) {
+                CloseBattleLog();
+                return 1;
+            }
 
             state.current_turn = 1;
-            ShowTurnTransitionMask(1);
             CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
+            if (IsReturnToMenuRequested()) {
+                CloseBattleLog();
+                return 1;
+            }
 
             ResolvePlannedRound(&state, 2, p1_records, p1_count, p2_records, p2_count);
+        }
+        if (IsReturnToMenuRequested()) {
+            CloseBattleLog();
+            return 1;
         }
 
         EndTurn(&state);
@@ -687,22 +712,67 @@ void RunGameLoop() {
     }
 
     // ================================================================
-    //  场景四：SCENE_RESULT — 结算
+    //  鍦烘櫙鍥涳細SCENE_RESULT 鈥?缁撶畻
     // ================================================================
     state.current_scene = SCENE_RESULT;
     state.game_stage = 3;
     RenderGameBoard(state);
 
     int p1_alive = PlayerHasAliveCharacter(&state.p1);
-    printf("\n========== 游戏结束 ==========\n");
+    printf("\n========== Game Over ==========\n");
     if (p1_alive) {
-        printf("玩家1获胜！\n");
+        printf("Player 1 wins.\n");
     } else {
-        printf("玩家2获胜！\n");
+        printf("Player 2 wins.\n");
     }
-    printf("总回合数: %d\n", state.round_count);
+    printf("Total rounds: %d\n", state.round_count);
     printf("===============================\n");
 
     CloseBattleLog();
+    return 0;
+}
+
+void RunGameLoop() {
+    InitGUI();
+
+#ifndef USE_EASYX
+    int env_mode = ReadEnvInt("ROCO_GAME_MODE", -1, -1, 1);
+    if (env_mode >= 0) {
+        printf("[Engine] Using mode selected by environment: %s\n",
+               env_mode == MODE_PVP ? "Local PvP" : "PvE");
+        RunBattleLoop(env_mode);
+        CloseGUI();
+        return;
+    }
+#endif
+
+    while (1) {
+        ClearReturnToMenuRequest();
+        MenuSelection selection = ShowMainMenu();
+        if (selection == MENU_PVP) {
+            RunBattleLoop(MODE_PVP);
+#ifdef USE_EASYX
+            continue;
+#else
+            break;
+#endif
+        }
+        if (selection == MENU_PVE) {
+            RunBattleLoop(MODE_PVE);
+#ifdef USE_EASYX
+            continue;
+#else
+            break;
+#endif
+        }
+        if (selection == MENU_CREDITS) {
+            ShowCreditsScreenFromFile("docs/credits.txt");
+            continue;
+        }
+        if (selection == MENU_EXIT) {
+            break;
+        }
+    }
+
     CloseGUI();
 }

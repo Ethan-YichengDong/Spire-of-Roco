@@ -32,6 +32,10 @@ int SelectMultipleCharactersFromUI(int player_id, const GameState* state, int ma
 int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, int* out_count);
 // 主菜单阶段：获取玩家的游戏模式选择，返回MODE_PVP或MODE_PVE（定义于game_core.h）
 int GetModeSelectionFromUI();
+MenuSelection ShowMainMenu(void);
+int ShowCreditsScreenFromFile(const char* path);
+void ClearReturnToMenuRequest(void);
+int IsReturnToMenuRequested(void);
 #include "../src_data/data_manager.h"
 #ifdef __cplusplus
 }

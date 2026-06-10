@@ -1,4 +1,4 @@
-#include "gui_manager.h"
+﻿#include "gui_manager.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -11,10 +11,11 @@
 
 #define UI_PAD 12
 #define UI_GAP 8
-#define UI_CARD_H 118
-#define UI_SKILL_CARD_H 132
-#define UI_CHARACTER_CARD_H 132
-#define UI_BUTTON_H 44
+#define UI_CARD_H 128
+#define UI_SKILL_CARD_H 148
+#define UI_CHARACTER_CARD_H 148
+#define UI_BUTTON_H 50
+#define UI_FONT_FACE_UTF8 "Microsoft YaHei"
 
 static int g_draw_y = 10;
 void print_character(const Character* ch);
@@ -54,10 +55,17 @@ static int g_records_panel_y = 376;
 static int g_records_panel_h = 260;
 static int g_is_fullscreen = 1;
 static int g_is_quitting = 0;
+static int g_return_to_menu_requested = 0;
+static int g_menu_button_visible = 0;
+static int g_menu_button_x = 0;
+static int g_menu_button_y = 0;
+static int g_menu_button_w = 0;
+static int g_menu_button_h = 0;
 static int g_last_canvas_w = 0;
 static int g_last_canvas_h = 0;
 static int g_ui_layout_version = 0;
 static int g_defer_present = 0;
+static HFONT g_ui_font = NULL;
 
 static void draw_background_shell();
 static void present_frame();
@@ -228,45 +236,96 @@ static void reset_draw_y() {
     draw_background_shell();
 }
 
-// Convert UTF-8 C string to current ANSI code page string
-static std::string utf8_to_acp_str(const char* utf8) {
-    if (!utf8) return std::string();
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-    if (wlen == 0) return std::string();
+static std::wstring utf8_to_wide_str(const char* utf8) {
+    if (!utf8) return std::wstring();
+    int wlen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, NULL, 0);
+    UINT codepage = CP_UTF8;
+    DWORD flags = MB_ERR_INVALID_CHARS;
+    if (wlen == 0) {
+        codepage = CP_ACP;
+        flags = 0;
+        wlen = MultiByteToWideChar(codepage, flags, utf8, -1, NULL, 0);
+    }
+    if (wlen == 0) return std::wstring();
     wchar_t* wbuf = (wchar_t*)malloc(wlen * sizeof(wchar_t));
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wbuf, wlen);
-    int alen = WideCharToMultiByte(CP_ACP, 0, wbuf, -1, NULL, 0, NULL, NULL);
-    char* abuf = (char*)malloc(alen);
-    WideCharToMultiByte(CP_ACP, 0, wbuf, -1, abuf, alen, NULL, NULL);
-    std::string s(abuf);
+    if (!wbuf) return std::wstring();
+    MultiByteToWideChar(codepage, flags, utf8, -1, wbuf, wlen);
+    std::wstring s(wbuf);
     free(wbuf);
-    free(abuf);
+    if (!s.empty() && s[0] == 0xFEFF) s.erase(0, 1);
     return s;
 }
 
-// Helper wrappers that accept UTF-8 literals
+static int textwidth_wide(const std::wstring& text) {
+    if (text.empty()) return 0;
+    HDC hdc = GetImageHDC(NULL);
+    SIZE size = { 0, 0 };
+    SetBkMode(hdc, TRANSPARENT);
+    GetTextExtentPoint32W(hdc, text.c_str(), (int)text.size(), &size);
+    return size.cx;
+}
+
+static int scaled_font_height(int height) {
+    int canvas_h = g_ui_h > 0 ? g_ui_h : 720;
+    int scale_percent = 108;
+    if (canvas_h > 720) {
+        scale_percent += clamp_int(((canvas_h - 720) * 24) / 360, 0, 24);
+    }
+    int adjusted = (height * scale_percent + 50) / 100;
+    return clamp_int(adjusted, height + 1, height + 8);
+}
+
+// Helper wrappers that accept UTF-8 literals or UTF-8 file text.
 static void outtextxy_utf8(int x, int y, const char* utf8) {
-    std::string s = utf8_to_acp_str(utf8);
-    outtextxy(x, y, s.c_str());
+    std::wstring s = utf8_to_wide_str(utf8);
+    HDC hdc = GetImageHDC(NULL);
+    SetBkMode(hdc, TRANSPARENT);
+    TextOutW(hdc, x, y, s.c_str(), (int)s.size());
 }
 static void outtextxy_clipped_utf8(int x, int y, int max_w, const char* utf8) {
-    std::string s = utf8_to_acp_str(utf8);
     if (max_w <= 0) return;
-    if (textwidth(s.c_str()) > max_w) {
-        while (s.size() > 3 && textwidth((s + "...").c_str()) > max_w) {
+    std::wstring s = utf8_to_wide_str(utf8);
+    if (textwidth_wide(s) > max_w) {
+        const std::wstring suffix = L"...";
+        while (!s.empty() && textwidth_wide(s + suffix) > max_w) {
             s.erase(s.size() - 1);
         }
-        s += "...";
+        s += suffix;
     }
-    outtextxy(x, y, s.c_str());
+    HDC hdc = GetImageHDC(NULL);
+    SetBkMode(hdc, TRANSPARENT);
+    TextOutW(hdc, x, y, s.c_str(), (int)s.size());
+}
+static void outtextxy_centered_utf8(int x, int y, int w, int h, const char* utf8) {
+    if (w <= 0 || h <= 0) return;
+    std::wstring s = utf8_to_wide_str(utf8);
+    int text_w = textwidth_wide(s);
+    int draw_x = x + (w - text_w) / 2;
+    if (draw_x < x + 2) draw_x = x + 2;
+    HDC hdc = GetImageHDC(NULL);
+    SetBkMode(hdc, TRANSPARENT);
+    TextOutW(hdc, draw_x, y + 2, s.c_str(), (int)s.size());
 }
 static void settextstyle_utf8(int height, int width, const char* utf8Name) {
-    std::string s = utf8_to_acp_str(utf8Name);
-    settextstyle(height, width, s.c_str());
+    std::wstring face = utf8_to_wide_str((utf8Name && utf8Name[0]) ? utf8Name : UI_FONT_FACE_UTF8);
+    if (face.empty()) face = L"Microsoft YaHei";
+    LOGFONTW lf;
+    memset(&lf, 0, sizeof(lf));
+    lf.lfHeight = scaled_font_height(height);
+    lf.lfWidth = width;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    wcsncpy(lf.lfFaceName, face.c_str(), LF_FACESIZE - 1);
+    HFONT next_font = CreateFontIndirectW(&lf);
+    if (!next_font) return;
+    HDC hdc = GetImageHDC(NULL);
+    SelectObject(hdc, next_font);
+    if (g_ui_font) DeleteObject(g_ui_font);
+    g_ui_font = next_font;
 }
 static void draw_line(const char* s) {
     outtextxy_clipped_utf8(g_main_x + 16, g_draw_y, g_main_w - 32, s);
-    g_draw_y += 26;
+    g_draw_y += clamp_int(scaled_font_height(18) + 8, 28, 36);
 }
 #ifdef USE_EASYX
 static void draw_overlay_message(const char* utf8msg);
@@ -358,10 +417,10 @@ static COLORREF hp_state_color(int hp, int max_hp) {
 }
 
 static void draw_section_title(int x, int y, const char* title) {
-    settextstyle_utf8(22, 0, "SimSun");
+    settextstyle_utf8(22, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(28, 36, 42));
     outtextxy_clipped_utf8(x, y, g_ui_w - x - g_ui_margin, title);
-    settextstyle_utf8(20, 0, "SimSun");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
 }
 
 static void draw_soft_panel(int x, int y, int w, int h, COLORREF fill, COLORREF border) {
@@ -385,15 +444,49 @@ static void end_deferred_present() {
     if (g_defer_present == 0) FlushBatchDraw();
 }
 
+static void draw_global_menu_button(int visible) {
+    g_menu_button_visible = visible;
+    if (!visible) {
+        g_menu_button_x = g_menu_button_y = g_menu_button_w = g_menu_button_h = 0;
+        return;
+    }
+
+    g_menu_button_w = clamp_int(g_ui_w / 10, 118, 150);
+    g_menu_button_h = clamp_int(g_status_h - 12, 30, 42);
+    g_menu_button_x = g_ui_w - g_ui_margin - g_menu_button_w;
+    g_menu_button_y = (g_status_h - g_menu_button_h) / 2;
+
+    setfillcolor(RGB(74, 94, 124));
+    fillrectangle(g_menu_button_x, g_menu_button_y,
+                  g_menu_button_x + g_menu_button_w,
+                  g_menu_button_y + g_menu_button_h);
+    setlinecolor(RGB(36, 54, 78));
+    rectangle(g_menu_button_x, g_menu_button_y,
+              g_menu_button_x + g_menu_button_w,
+              g_menu_button_y + g_menu_button_h);
+    settextstyle_utf8(18, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(255, 250, 230));
+    outtextxy_centered_utf8(g_menu_button_x, g_menu_button_y + 3,
+                            g_menu_button_w, g_menu_button_h - 6,
+                            "Main Menu");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
+}
+
 static void draw_status_bar(const GameState* st, int acting_player_id, const char* phase) {
     if (!st) return;
     update_layout();
     char buf[256];
+    int show_menu_button = 1;
+    int menu_w = clamp_int(g_ui_w / 10, 118, 150);
+    int menu_x = g_ui_w - g_ui_margin - menu_w;
     int hotkey_w = clamp_int(g_ui_w / 5, 170, 240);
-    int hotkey_x = g_ui_w - g_ui_margin - hotkey_w;
+    int hotkey_x = show_menu_button ? (menu_x - hotkey_w - 10) : (g_ui_w - g_ui_margin - hotkey_w);
     int round_w = 130;
-    int acting_w = clamp_int((hotkey_x - g_ui_margin - round_w) / 2, 140, 230);
-    int phase_x = g_ui_margin + round_w + acting_w;
+    int current_id = acting_player_id > 0 ? acting_player_id : st->current_turn;
+    int banner_w = clamp_int(g_ui_w / 4, 250, 380);
+    int banner_x = (g_ui_w - banner_w) / 2;
+    int phase_x = banner_x + banner_w + 12;
     int phase_w = hotkey_x - phase_x - 8;
     draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
@@ -401,83 +494,38 @@ static void draw_status_bar(const GameState* st, int acting_player_id, const cha
     settextcolor(RGB(26, 36, 45));
     snprintf(buf, sizeof(buf), "Round %d", st->round_count);
     outtextxy_clipped_utf8(g_ui_margin, 12, round_w - 8, buf);
-    snprintf(buf, sizeof(buf), "Acting Player: P%d", acting_player_id > 0 ? acting_player_id : st->current_turn);
-    outtextxy_clipped_utf8(g_ui_margin + round_w, 12, acting_w - 8, buf);
+    setfillcolor(current_id == 2 ? RGB(224, 103, 82) : RGB(71, 135, 200));
+    fillrectangle(banner_x, 6, banner_x + banner_w, g_status_h - 6);
+    setlinecolor(current_id == 2 ? RGB(146, 57, 45) : RGB(44, 89, 142));
+    rectangle(banner_x, 6, banner_x + banner_w, g_status_h - 6);
+    settextcolor(RGB(255, 250, 230));
+    snprintf(buf, sizeof(buf), "Current Player: Player %d", current_id);
+    outtextxy_clipped_utf8(banner_x + 14, 12, banner_w - 28, buf);
+    settextcolor(RGB(26, 36, 45));
     if (phase && phase[0] != '\0') {
         snprintf(buf, sizeof(buf), "Phase: %s", phase);
         outtextxy_clipped_utf8(phase_x, 12, phase_w, buf);
     }
     outtextxy_clipped_utf8(hotkey_x, 12, hotkey_w, "Esc: Quit  F11: Toggle");
+    draw_global_menu_button(show_menu_button);
     g_draw_y = g_main_y + 14;
 }
 
 static void draw_simple_status_bar(const char* title) {
     update_layout();
+    int show_menu_button = !(title && strcmp(title, "Main Menu") == 0);
+    int menu_w = clamp_int(g_ui_w / 10, 118, 150);
+    int menu_x = g_ui_w - g_ui_margin - menu_w;
     int hotkey_w = clamp_int(g_ui_w / 5, 170, 240);
-    int hotkey_x = g_ui_w - g_ui_margin - hotkey_w;
+    int hotkey_x = show_menu_button ? (menu_x - hotkey_w - 10) : (g_ui_w - g_ui_margin - hotkey_w);
     draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
     setlinecolor(RGB(70, 95, 130));
     rectangle(0, 0, g_ui_w - 1, g_status_h);
     settextcolor(RGB(26, 36, 45));
     outtextxy_clipped_utf8(g_ui_margin, 12, hotkey_x - g_ui_margin - 8, title ? title : "Spire of Roco");
     outtextxy_clipped_utf8(hotkey_x, 12, hotkey_w, "Esc: Quit  F11: Toggle");
+    draw_global_menu_button(show_menu_button);
     g_draw_y = g_main_y + 14;
-}
-
-static void drain_easyx_input() {
-    while (MouseHit()) {
-        handle_global_hotkeys();
-        GetMouseMsg();
-    }
-    Sleep(80);
-    while (MouseHit()) {
-        handle_global_hotkeys();
-        GetMouseMsg();
-    }
-    while ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
-           (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
-           (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
-        handle_global_hotkeys();
-        Sleep(10);
-    }
-    int any_down = 1;
-    while (any_down) {
-        handle_global_hotkeys();
-        any_down = 0;
-        for (int vk = 8; vk <= 255; vk++) {
-            if (GetAsyncKeyState(vk) & 0x8000) {
-                any_down = 1;
-                break;
-            }
-        }
-        if (any_down) Sleep(10);
-    }
-}
-
-static void wait_for_fresh_ack(const char* prompt) {
-    draw_overlay_message(prompt);
-    int layout_version = g_ui_layout_version;
-    drain_easyx_input();
-    while (1) {
-        handle_global_hotkeys();
-        if (layout_changed_since(&layout_version)) {
-            draw_background_shell();
-            draw_overlay_message(prompt);
-        }
-        if (MouseHit()) {
-            MOUSEMSG mm = GetMouseMsg();
-            if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
-        }
-        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
-            (GetAsyncKeyState(VK_RBUTTON) & 0x8000) ||
-            (GetAsyncKeyState(VK_MBUTTON) & 0x8000)) {
-            return;
-        }
-        for (int vk = 8; vk <= 255; vk++) {
-            if (GetAsyncKeyState(vk) & 0x8000) return;
-        }
-        Sleep(10);
-    }
 }
 
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh) {
@@ -491,6 +539,14 @@ static int poll_mouse_message(MOUSEMSG* out_msg) {
         return 0;
     }
     *out_msg = GetMouseMsg();
+    if (g_menu_button_visible &&
+        out_msg->uMsg == WM_LBUTTONDOWN &&
+        point_in_rect(out_msg->x, out_msg->y,
+                      g_menu_button_x, g_menu_button_y,
+                      g_menu_button_w, g_menu_button_h)) {
+        g_return_to_menu_requested = 1;
+        return 0;
+    }
     return 1;
 }
 
@@ -516,13 +572,33 @@ static void draw_button_state(int x, int y, int w, int h, const char* label, int
         fillrectangle(x + 7, y + 7, x + 22, y + h - 7);
     }
     settextcolor(disabled ? RGB(95, 98, 98) : (selected ? RGB(20, 42, 34) : RGB(29, 31, 30)));
-    outtextxy_clipped_utf8(x + (selected ? 30 : 12), y + (h - 20) / 2, w - (selected ? 42 : 24), label);
+    int label_font = clamp_int((h * 42) / 100, 18, 24);
+    int label_h = scaled_font_height(label_font);
+    settextstyle_utf8(label_font, 0, UI_FONT_FACE_UTF8);
+    outtextxy_clipped_utf8(x + (selected ? 30 : 12), y + (h - label_h) / 2, w - (selected ? 42 : 24), label);
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(31, 37, 41));
     present_frame();
 }
 
 static void draw_button(int x, int y, int w, int h, const char* label) {
     draw_button_state(x, y, w, h, label, 0, 0, 0);
+}
+
+static void draw_quantity_control(int x, int y, int w, int h, int quantity) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", quantity);
+    setfillcolor(quantity > 0 ? RGB(38, 68, 91) : RGB(246, 242, 222));
+    fillrectangle(x, y, x + w, y + h);
+    setlinecolor(quantity > 0 ? RGB(18, 43, 61) : RGB(96, 83, 55));
+    rectangle(x, y, x + w, y + h);
+    settextstyle_utf8(22, 0, UI_FONT_FACE_UTF8);
+    settextcolor(quantity > 0 ? RGB(255, 250, 228) : RGB(31, 37, 41));
+    int text_h = scaled_font_height(22);
+    outtextxy_centered_utf8(x, y + (h - text_h) / 2, w, h, buf);
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
+    present_frame();
 }
 
 static void draw_overlay_message_kind(const char* utf8msg, UiMessageKind kind) {
@@ -674,7 +750,7 @@ static void draw_character_slot(const Character* ch, int slot_idx, int x, int y,
     DrawCardFrame(x, y, w, h, fill, border, active, hover, !alive);
     setfillcolor(alive ? element_color(ch->element) : RGB(135, 135, 130));
     fillrectangle(x + 1, y + 1, x + w - 1, y + 22);
-    settextstyle_utf8(16, 0, "SimSun");
+    settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
     outtextxy_clipped_utf8(x + 8, y + 4, w - 16, buf);
@@ -697,14 +773,14 @@ static void draw_character_slot(const Character* ch, int slot_idx, int x, int y,
         settextcolor(RGB(128, 45, 42));
         outtextxy_clipped_utf8(text_x, y + 28, text_w, "DEFEATED");
     }
-    settextstyle_utf8(16, 0, "SimSun");
+    settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
     settextcolor(alive ? RGB(74, 67, 55) : RGB(104, 104, 100));
     snprintf(buf, sizeof(buf), "%s  SPD %d", element_label(ch->element), ch->speed);
     outtextxy_clipped_utf8(text_x, y + (compact ? 34 : 50), text_w, buf);
     snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
     outtextxy_clipped_utf8(text_x, y + (compact ? 52 : 70), text_w, buf);
     draw_meter_colored(x + 10, meter_y, w - 20, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
-    settextstyle_utf8(20, 0, "SimSun");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
 }
 
 static void draw_player_team_panel(const Player* player, int player_id, int panel_x, const char* fallback_title,
@@ -782,7 +858,7 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
     DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
     setfillcolor(elem);
     fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
-    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
+    settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
     outtextxy_clipped_utf8(x + 10, y + 6, w - 56, buf);
@@ -801,7 +877,7 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
     DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, c->element, disabled);
     int text_x = x + art_w + 20;
     int text_w = w - art_w - 30;
-    settextstyle_utf8(compact ? 15 : 16, 0, "SimSun");
+    settextstyle_utf8(compact ? 15 : 16, 0, UI_FONT_FACE_UTF8);
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
     snprintf(buf, sizeof(buf), "%s / %s", element_label(c->element), card_type_label(c->type));
     outtextxy_clipped_utf8(text_x, y + 38, text_w, buf);
@@ -816,7 +892,7 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
         settextcolor(RGB(246, 242, 222));
         outtextxy_utf8(x + w - 40, y + h - 25, buf);
     }
-    settextstyle_utf8(20, 0, "SimSun");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(31, 37, 41));
     present_frame();
 }
@@ -830,7 +906,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
     setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
     fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
-    settextstyle_utf8(compact ? 16 : 18, 0, "SimSun");
+    settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
     outtextxy_clipped_utf8(x + 10, y + 6, w - 20, buf);
@@ -839,7 +915,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, ch->element, disabled);
     int text_x = x + art_w + 20;
     int text_w = w - art_w - 30;
-    settextstyle_utf8(compact ? 15 : 16, 0, "SimSun");
+    settextstyle_utf8(compact ? 15 : 16, 0, UI_FONT_FACE_UTF8);
     settextcolor(disabled ? RGB(92, 92, 88) : RGB(27, 33, 35));
     snprintf(buf, sizeof(buf), "%s  Speed %d", element_label(ch->element), ch->speed);
     outtextxy_clipped_utf8(text_x, y + (compact ? 36 : 40), text_w, buf);
@@ -1033,9 +1109,17 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     draw_team_hp_panel(NULL);
     snprintf(buf, sizeof(buf), "Deck Build - Player %d", player_id);
     draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, buf);
-    g_draw_y += 32;
+    g_draw_y += 40;
     snprintf(buf, sizeof(buf), "Selected %d/%d", selected_count, max_select);
-    draw_line(buf);
+    int count_x = g_main_x + UI_PAD + 4;
+    int count_y = g_draw_y;
+    int count_w = clamp_int(g_main_w / 4, 180, 260);
+    draw_soft_panel(count_x, count_y, count_w, 36, RGB(245, 238, 209), RGB(88, 76, 52));
+    settextstyle_utf8(22, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
+    outtextxy_centered_utf8(count_x, count_y + 4, count_w, 28, buf);
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    g_draw_y += 48;
     int cx = g_main_x + 24;
     int cy = g_draw_y + 8;
     int card_x[MAX_GLOBAL_CARDS] = {0};
@@ -1059,8 +1143,7 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
             set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, control_y, 36, 32);
             set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, control_y, 36, 32);
             draw_button_state(x_minus, control_y, 36, 32, "-", 0, hover_minus == i, qty[i] <= 0);
-            snprintf(buf, sizeof(buf), "%d", qty[i]);
-            draw_button_state(x_qty, control_y, 44, 32, buf, qty[i] > 0, 0, 0);
+            draw_quantity_control(x_qty, control_y, 44, 32, qty[i]);
             draw_button_state(x_plus, control_y, 36, 32, "+", 0, hover_plus == i, selected_count >= max_select);
         }
     }
@@ -1071,17 +1154,78 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     end_deferred_present();
 }
 
-static void draw_main_menu_screen(int selected_mode, int hover_choice, int hover_confirm) {
+static void draw_menu_button(int x, int y, int w, int h, const char* label, int hover) {
+    draw_button_state(x, y, w, h, label, 0, hover, 0);
+}
+
+static void draw_main_menu_screen(MenuSelection hover_choice) {
     begin_deferred_present();
     reset_draw_y();
     draw_simple_status_bar("Main Menu");
-    draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, "Spire of Roco");
-    g_draw_y += 38;
-    draw_line("Select battle mode");
-    int bx = g_main_x + 52, by = g_draw_y + 12, bw = 320, bh = 64;
-    draw_button_state(bx, by, bw, bh, "Local PvP", selected_mode == MODE_PVP, hover_choice == MODE_PVP, 0);
-    draw_button_state(bx, by + 88, bw, bh, "AI PvE", selected_mode == MODE_PVE, hover_choice == MODE_PVE, 0);
-    draw_button_state(bx, by + 190, 140, 42, "Confirm", selected_mode >= 0, hover_confirm, 0);
+    int menu_w = clamp_int(g_main_w / 2, 340, 460);
+    int bx = g_main_x + (g_main_w - menu_w) / 2;
+    int by = g_main_y + clamp_int(g_main_h / 5, 70, 130);
+    int bh = 58;
+    settextstyle_utf8(34, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(26, 36, 45));
+    outtextxy_clipped_utf8(g_main_x + UI_PAD, by - 82, g_main_w - (UI_PAD * 2), "Spire of Roco");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    draw_menu_button(bx, by, menu_w, bh, "PVP Mode", hover_choice == MENU_PVP);
+    draw_menu_button(bx, by + 76, menu_w, bh, "PVE Mode", hover_choice == MENU_PVE);
+    draw_menu_button(bx, by + 152, menu_w, bh, "Credits", hover_choice == MENU_CREDITS);
+    end_deferred_present();
+}
+
+static std::string read_text_file_utf8(const char* path) {
+    if (!path) return std::string();
+    FILE* fp = fopen(path, "rb");
+    if (!fp) return std::string();
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (size < 0 || size > 65536) {
+        fclose(fp);
+        return std::string();
+    }
+    std::string text;
+    text.resize((size_t)size);
+    if (size > 0) fread(&text[0], 1, (size_t)size, fp);
+    fclose(fp);
+    return text;
+}
+
+static void draw_credits_screen(const char* credits_text, int hover_back) {
+    begin_deferred_present();
+    reset_draw_y();
+    draw_simple_status_bar("Credits");
+    draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, "Credits");
+    int text_x = g_main_x + 28;
+    int text_y = g_draw_y + 44;
+    int text_w = g_main_w - 56;
+    int line_h = 24;
+    int max_lines = (bottom_button_y() - text_y - UI_GAP) / line_h;
+    const char* fallback = "Credits file not found. Please edit docs/credits.txt.";
+    const char* src = (credits_text && credits_text[0] != '\0') ? credits_text : fallback;
+    char line[256];
+    int line_len = 0;
+    int shown = 0;
+    settextcolor(RGB(38, 44, 48));
+    for (const char* p = src; ; p++) {
+        char ch = *p;
+        if (ch == '\r') continue;
+        if (ch == '\n' || ch == '\0') {
+            line[line_len] = '\0';
+            if (shown < max_lines) {
+                outtextxy_clipped_utf8(text_x, text_y + shown * line_h, text_w, line);
+                shown++;
+            }
+            line_len = 0;
+            if (ch == '\0') break;
+            continue;
+        }
+        if (line_len < (int)sizeof(line) - 1) line[line_len++] = ch;
+    }
+    draw_button_state(g_main_x + 24, bottom_button_y(), 140, 40, "Back", 0, hover_back, 0);
     end_deferred_present();
 }
 
@@ -1090,7 +1234,7 @@ static void draw_main_menu_screen(int selected_mode, int hover_choice, int hover
 // no graphical helpers
 #endif
 
-// 简易基于控制台的 GUI 实现，便于在没有图形库时交互和调试。
+// 绠€鏄撳熀浜庢帶鍒跺彴鐨?GUI 瀹炵幇锛屼究浜庡湪娌℃湁鍥惧舰搴撴椂浜や簰鍜岃皟璇曘€?
 
 void InitGUI() {
 #ifdef USE_EASYX
@@ -1107,21 +1251,40 @@ void InitGUI() {
     settextcolor(RGB(31, 37, 41));
     setbkmode(TRANSPARENT);
     cleardevice();
-    settextstyle_utf8(20,0,"SimSun");
+    settextstyle_utf8(20,0,UI_FONT_FACE_UTF8);
     draw_background_shell();
     outtextxy_utf8(20, 20, "Spire of Roco loading...");
     present_frame();
 #else
-    // 控制台不需要特别初始化
+    // 鎺у埗鍙颁笉闇€瑕佺壒鍒垵濮嬪寲
 #endif
 }
 
 void CloseGUI() {
 #ifdef USE_EASYX
     EndBatchDraw();
+    if (g_ui_font) {
+        DeleteObject(g_ui_font);
+        g_ui_font = NULL;
+    }
     closegraph();
 #else
-    // 控制台不需要特别释放
+    // 鎺у埗鍙颁笉闇€瑕佺壒鍒噴鏀?
+#endif
+}
+
+void ClearReturnToMenuRequest(void) {
+#ifdef USE_EASYX
+    g_return_to_menu_requested = 0;
+    g_menu_button_visible = 0;
+#endif
+}
+
+int IsReturnToMenuRequested(void) {
+#ifdef USE_EASYX
+    return g_return_to_menu_requested;
+#else
+    return 0;
 #endif
 }
 
@@ -1245,46 +1408,8 @@ void RenderGameBoard(GameState state) {
 #endif
 }
 
-static void wait_for_enter(const char* prompt) {
-#ifdef USE_EASYX
-    // Draw prompt in a bottom overlay so it doesn't overlap buttons
-    draw_overlay_message(prompt);
-    int layout_version = g_ui_layout_version;
-    // Wait for any key or mouse click using non-blocking checks so the EasyX window doesn't need console focus
-    while (1) {
-        handle_global_hotkeys();
-        if (layout_changed_since(&layout_version)) {
-            draw_background_shell();
-            draw_overlay_message(prompt);
-        }
-        // check for mouse clicks queued by EasyX
-        if (MouseHit()) {
-            MOUSEMSG mm = GetMouseMsg();
-            if (mm.uMsg == WM_LBUTTONDOWN || mm.uMsg == WM_RBUTTONDOWN) return;
-        }
-        // check keyboard state (any key)
-        for (int vk = 8; vk <= 255; vk++) {
-            if (GetAsyncKeyState(vk) & 0x8000) return;
-        }
-        Sleep(10);
-    }
-#else
-    printf("%s", prompt);
-    fflush(stdout);
-    int c = getchar();
-    while (c != '\n' && c != EOF) { if (c == '\r') break; c = getchar(); }
-#endif
-}
-
 void ShowTurnTransitionMask(int player_id) {
-#ifdef USE_EASYX
-    char buf[128]; snprintf(buf,sizeof(buf), "---- Turn: Player %d ----", player_id); draw_overlay_message(buf);
-    present_frame();
-    wait_for_enter("Press any key to continue...");
-#else
-    printf("\n---- Turn: Player %d ----\n", player_id);
-    wait_for_enter("Press Enter to continue...\n");
-#endif
+    (void)player_id;
 }
 
 Action GetHumanInputFromUI(int player_id, GameState state) {
@@ -1320,6 +1445,7 @@ action_menu:
     MOUSEMSG m;
     while (1) {
         if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return act;
             if (layout_changed_since(&layout_version)) goto action_menu;
             continue;
         }
@@ -1339,7 +1465,7 @@ action_menu:
             if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { act.type = ACTION_END_TURN; return act; }
             else if (point_in_rect(m.x, m.y, bx, by + 60, bw, bh)) {
                 if (p->hand_count == 0) { draw_line("Hand empty, cannot play."); continue; }
-                // 清理并显示手牌为可点按钮（避免文本重叠）
+                // 娓呯悊骞舵樉绀烘墜鐗屼负鍙偣鎸夐挳锛堥伩鍏嶆枃鏈噸鍙狅級
                 reset_draw_y();
                 draw_team_hp_panel(&state);
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a hand card:", player_id); draw_line(buf);
@@ -1350,9 +1476,10 @@ action_menu:
                     char buf[128]; snprintf(buf, sizeof(buf), "[%d] %s", i, p->hand[i].name);
                     draw_button(hx, hy + i * (hh + 8), hw, hh, buf);
                 }
-                // 等待手牌点击
+                // 绛夊緟鎵嬬墝鐐瑰嚮
                 while (1) {
                     if (!poll_mouse_message(&m)) {
+                        if (IsReturnToMenuRequested()) return act;
                         if (layout_changed_since(&layout_version)) goto action_menu;
                         continue;
                     }
@@ -1368,7 +1495,7 @@ action_menu:
                                     draw_overlay_message(msg);
                                     break; // end for loop and wait for next click
                                 }
-                                // 构造动作并显示信息
+                                // 鏋勯€犲姩浣滃苟鏄剧ず淇℃伅
                                 act.type = ACTION_PLAY_CARD;
                                 act.card_hand_idx = i;
                                 act.actor_id = player_id;
@@ -1379,7 +1506,7 @@ action_menu:
                                     draw_overlay_message(ebuf);
                                 }
                                 if (c->target_type == TARGET_ENEMY_SINGLE || c->target_type == TARGET_SELF_SINGLE) {
-                                    // 显示目标选择（简化为显示 TEAM_SIZE 个按钮，附带角色名）
+                                    // 鏄剧ず鐩爣閫夋嫨锛堢畝鍖栦负鏄剧ず TEAM_SIZE 涓寜閽紝闄勫甫瑙掕壊鍚嶏級
                                     UiRect target_rects[TEAM_SIZE] = {};
                                     Character* target_team = NULL;
                                     int target_player_id = player_id;
@@ -1388,7 +1515,7 @@ action_menu:
                                         target_player_id = player_id;
                                     }
                                     else {
-                                        // 敌方队伍
+                                        // 鏁屾柟闃熶紞
                                         if (player_id == state.p1.player_id) {
                                             target_team = (Character*)state.p2.team;
                                             target_player_id = state.p2.player_id;
@@ -1403,6 +1530,7 @@ action_menu:
                                     }
                                     while (1) {
                                         if (!poll_mouse_message(&m)) {
+                                            if (IsReturnToMenuRequested()) return act;
                                             if (layout_changed_since(&layout_version)) goto action_menu;
                                             continue;
                                         }
@@ -1421,7 +1549,7 @@ action_menu:
                                         }
                                     }
                                 } else {
-                                    act.target_idx = 0; // 全体
+                                    act.target_idx = 0; // 鍏ㄤ綋
                                     return act;
                                 }
                             }
@@ -1430,7 +1558,7 @@ action_menu:
                 }
             }
             else if (point_in_rect(m.x, m.y, bx, by + 120, bw, bh)) {
-                // 清理并显示可切换角色（避免文本重叠）
+                // 娓呯悊骞舵樉绀哄彲鍒囨崲瑙掕壊锛堥伩鍏嶆枃鏈噸鍙狅級
                 reset_draw_y();
                 draw_team_hp_panel(&state);
                 snprintf(buf, sizeof(buf), "Player %d's turn - Select a character to switch:", player_id); settextcolor(BLACK); draw_line(buf); draw_line("Current:"); print_character(&p->team[p->active_idx]);
@@ -1441,6 +1569,7 @@ action_menu:
                 }
                 while (1) {
                     if (!poll_mouse_message(&m)) {
+                        if (IsReturnToMenuRequested()) return act;
                         if (layout_changed_since(&layout_version)) goto action_menu;
                         continue;
                     }
@@ -1556,6 +1685,7 @@ main_menu:
                 need_redraw = 0;
             }
             if (!poll_mouse_message(&m)) {
+                if (IsReturnToMenuRequested()) return act;
                 if (layout_changed_since(&layout_version)) goto main_menu;
                 continue;
             }
@@ -1625,6 +1755,7 @@ card_select:
                 need_redraw = 0;
             }
             if (!poll_mouse_message(&m)) {
+                if (IsReturnToMenuRequested()) return act;
                 if (layout_changed_since(&layout_version)) goto card_select;
                 continue;
             }
@@ -1691,6 +1822,7 @@ target_select:
                 need_redraw = 0;
             }
             if (!poll_mouse_message(&m)) {
+                if (IsReturnToMenuRequested()) return act;
                 if (layout_changed_since(&layout_version)) goto target_select;
                 continue;
             }
@@ -1743,6 +1875,7 @@ switch_select:
                 need_redraw = 0;
             }
             if (!poll_mouse_message(&m)) {
+                if (IsReturnToMenuRequested()) return act;
                 if (layout_changed_since(&layout_version)) goto switch_select;
                 continue;
             }
@@ -1796,6 +1929,7 @@ edit_select:
         end_deferred_present();
         while (1) {
             if (!poll_mouse_message(&m)) {
+                if (IsReturnToMenuRequested()) return act;
                 if (layout_changed_since(&layout_version)) goto edit_select;
                 continue;
             }
@@ -1959,7 +2093,6 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
         draw_line("Damage details: no damage");
     }
     end_deferred_present();
-    wait_for_fresh_ack("");
 #else
     printf("[Resolution %d/%d] %s\n", step_number, step_total, record ? record->summary : "");
     if (report && report->event_count > 0) {
@@ -2017,6 +2150,7 @@ single_character_select:
         }
 
         if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return -1;
             if (layout_changed_since(&layout_version)) goto single_character_select;
             continue;
         }
@@ -2111,6 +2245,11 @@ multi_character_select:
         }
 
         if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) {
+                free(selected);
+                if (out_count) *out_count = 0;
+                return 0;
+            }
             if (layout_changed_since(&layout_version)) {
                 free(selected);
                 goto multi_character_select;
@@ -2192,6 +2331,7 @@ single_card_select:
         }
 
         if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return -1;
             if (layout_changed_since(&layout_version)) goto single_card_select;
             continue;
         }
@@ -2230,7 +2370,6 @@ single_card_select:
             // confirm button
             if (!handled && point_in_ui_rect(m.x, m.y, &confirm_rect)) {
                 if (selected_idx >= 0) {
-                    char chosen[128]; snprintf(chosen, sizeof(chosen), "Confirmed: %s", g_all_cards[selected_idx].name); draw_overlay_message_kind(chosen, UI_MSG_CONFIRM);
                     return selected_idx;
                 } else {
                     draw_overlay_message_kind("No card selected", UI_MSG_ERROR);
@@ -2287,6 +2426,11 @@ multi_card_select:
         }
 
         if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) {
+                free(qty);
+                if (out_count) *out_count = 0;
+                return 0;
+            }
             if (layout_changed_since(&layout_version)) {
                 free(qty);
                 goto multi_card_select;
@@ -2384,61 +2528,84 @@ multi_card_select:
 #endif
 }
 
-int GetModeSelectionFromUI() {
+MenuSelection ShowMainMenu(void) {
 #ifdef USE_EASYX
-mode_menu:
+main_menu:
     int layout_version = g_ui_layout_version;
-    int bx = g_main_x + 52, by = g_draw_y + 10, bw = 280, bh = 64;
-    int confirm_x = bx, confirm_y = by + 200;
-    int selected_mode = -1;
-    int hover_choice = -1;
-    int hover_confirm = 0;
+    MenuSelection hover_choice = MENU_NONE;
     int need_redraw = 1;
     MOUSEMSG m;
     while (1) {
         if (need_redraw) {
-            draw_main_menu_screen(selected_mode, hover_choice, hover_confirm);
-            bx = g_main_x + 52; by = g_draw_y + 12; bw = 320; bh = 64;
-            confirm_x = bx; confirm_y = by + 190;
+            draw_main_menu_screen(hover_choice);
             need_redraw = 0;
         }
 
         if (!poll_mouse_message(&m)) {
-            if (layout_changed_since(&layout_version)) goto mode_menu;
+            if (IsReturnToMenuRequested()) return MENU_NONE;
+            if (layout_changed_since(&layout_version)) goto main_menu;
             continue;
         }
-        if (layout_changed_since(&layout_version)) goto mode_menu;
-        int new_hover_choice = -1;
-        int new_hover_confirm = 0;
-        if (point_in_rect(m.x, m.y, bx, by, bw, bh)) new_hover_choice = MODE_PVP;
-        else if (point_in_rect(m.x, m.y, bx, by + 88, bw, bh)) new_hover_choice = MODE_PVE;
-        else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 42)) new_hover_confirm = 1;
-        if (new_hover_choice != hover_choice || new_hover_confirm != hover_confirm) {
+        if (layout_changed_since(&layout_version)) goto main_menu;
+        int menu_w = clamp_int(g_main_w / 2, 340, 460);
+        int bx = g_main_x + (g_main_w - menu_w) / 2;
+        int by = g_main_y + clamp_int(g_main_h / 5, 70, 130);
+        int bh = 58;
+        MenuSelection new_hover_choice = MENU_NONE;
+        if (point_in_rect(m.x, m.y, bx, by, menu_w, bh)) new_hover_choice = MENU_PVP;
+        else if (point_in_rect(m.x, m.y, bx, by + 76, menu_w, bh)) new_hover_choice = MENU_PVE;
+        else if (point_in_rect(m.x, m.y, bx, by + 152, menu_w, bh)) new_hover_choice = MENU_CREDITS;
+        if (new_hover_choice != hover_choice) {
             hover_choice = new_hover_choice;
-            hover_confirm = new_hover_confirm;
             need_redraw = 1;
         }
         if (m.uMsg == WM_LBUTTONDOWN) {
-            if (point_in_rect(m.x, m.y, bx, by, bw, bh)) { selected_mode = MODE_PVP; need_redraw = 1; }
-            else if (point_in_rect(m.x, m.y, bx, by + 88, bw, bh)) { selected_mode = MODE_PVE; need_redraw = 1; }
-            else if (point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 42)) {
-                if (selected_mode == MODE_PVP || selected_mode == MODE_PVE) {
-                    char msg[64]; snprintf(msg, sizeof(msg), "Mode confirmed: %s", (selected_mode == MODE_PVE) ? "PvE" : "PvP");
-                    draw_overlay_message_kind(msg, UI_MSG_CONFIRM);
-                    return selected_mode;
-                } else {
-                    draw_overlay_message_kind("No mode selected", UI_MSG_ERROR);
-                }
-            }
+            if (hover_choice != MENU_NONE) return hover_choice;
         }
     }
 #else
-    printf("\nMain Menu: Select mode 0=Local PvP 1=AI PvE (default 0): ");
-    int m = MODE_PVP;
-    if (scanf("%d", &m) != 1) { while(getchar()!='\n'); m = MODE_PVP; }
-    while(getchar()!='\n');
-    if (m != MODE_PVE) m = MODE_PVP;
-    printf("Mode selected: %s\n", (m == MODE_PVE) ? "PvE" : "PvP");
-    return m;
+    const char* raw = getenv("ROCO_GAME_MODE");
+    if (raw != NULL && raw[0] == '1') return MENU_PVE;
+    return MENU_PVP;
 #endif
+}
+
+int ShowCreditsScreenFromFile(const char* path) {
+#ifdef USE_EASYX
+credits_screen:
+    int layout_version = g_ui_layout_version;
+    std::string credits = read_text_file_utf8(path);
+    int hover_back = 0;
+    int need_redraw = 1;
+    MOUSEMSG m;
+    while (1) {
+        if (need_redraw) {
+            draw_credits_screen(credits.c_str(), hover_back);
+            need_redraw = 0;
+        }
+        if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return 1;
+            if (layout_changed_since(&layout_version)) goto credits_screen;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto credits_screen;
+        int back_x = g_main_x + 24;
+        int back_y = bottom_button_y();
+        int new_hover_back = point_in_rect(m.x, m.y, back_x, back_y, 140, 40);
+        if (new_hover_back != hover_back) {
+            hover_back = new_hover_back;
+            need_redraw = 1;
+        }
+        if (m.uMsg == WM_LBUTTONDOWN && new_hover_back) return 1;
+    }
+#else
+    printf("[Credits] %s\n", path ? path : "docs/credits.txt");
+    return 1;
+#endif
+}
+
+int GetModeSelectionFromUI() {
+    MenuSelection selection = ShowMainMenu();
+    if (selection == MENU_PVE) return MODE_PVE;
+    return MODE_PVP;
 }

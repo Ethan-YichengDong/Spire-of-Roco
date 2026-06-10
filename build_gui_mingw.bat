@@ -4,6 +4,7 @@ chcp 65001 >nul
 
 set OUT=roco_gui.exe
 set EASYX_DIR=third_party\easyx4mingw
+set UTF8_FLAGS=-finput-charset=UTF-8 -fexec-charset=UTF-8
 
 if not exist "%EASYX_DIR%\include\graphics.h" (
     echo EasyX for MinGW is not installed locally.
@@ -30,7 +31,7 @@ echo Compiling GUI build with MinGW-w64 and project-local EasyX...
 gcc -Wall -Wextra -DUSE_EASYX -c src_data\data_manager.c src_data\battle_calculator.c src_engine\main.c src_engine\game_engine.c src_ai\ai_bridge.c
 if errorlevel 1 exit /b 1
 
-g++ -Wall -Wextra -DUSE_EASYX -I"%EASYX_DIR%\include" -c src_gui\gui_manager.cpp
+g++ -Wall -Wextra %UTF8_FLAGS% -DUSE_EASYX -I"%EASYX_DIR%\include" -c src_gui\gui_manager.cpp
 if errorlevel 1 exit /b 1
 
 g++ data_manager.o battle_calculator.o main.o game_engine.o ai_bridge.o gui_manager.o -L"%EASYX_DIR%\lib64" -leasyx -lws2_32 -lgdi32 -lole32 -o %OUT%
