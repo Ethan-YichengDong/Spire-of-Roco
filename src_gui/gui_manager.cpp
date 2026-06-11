@@ -695,6 +695,47 @@ static void DrawElementIcon(ElementType element, int cx, int cy, int size, int d
     }
 }
 
+static int shield_badge_width(int shield_value) {
+    if (shield_value >= 100) return 60;
+    if (shield_value >= 10) return 52;
+    return 44;
+}
+
+static void DrawShieldBadge(int x, int y, int shield_value, int disabled) {
+    if (shield_value <= 0) return;
+    int badge_w = shield_badge_width(shield_value);
+    int badge_h = 18;
+    int icon_x = x + 3;
+    int icon_y = y + 2;
+    COLORREF fill = disabled ? RGB(145, 151, 154) : RGB(64, 133, 190);
+    COLORREF border = disabled ? RGB(92, 94, 95) : RGB(32, 69, 112);
+    COLORREF text = disabled ? RGB(230, 230, 226) : RGB(255, 250, 224);
+    char buf[16];
+
+    setfillcolor(disabled ? RGB(96, 101, 103) : RGB(41, 75, 109));
+    fillrectangle(x, y, x + badge_w, y + badge_h);
+    setlinecolor(border);
+    rectangle(x, y, x + badge_w, y + badge_h);
+
+    POINT shield[5] = {
+        { icon_x + 7, icon_y },
+        { icon_x + 14, icon_y + 3 },
+        { icon_x + 12, icon_y + 11 },
+        { icon_x + 7, icon_y + 15 },
+        { icon_x + 2, icon_y + 11 }
+    };
+    setfillcolor(fill);
+    setlinecolor(RGB(232, 214, 126));
+    fillpolygon(shield, 5);
+    polygon(shield, 5);
+
+    if (shield_value > 999) snprintf(buf, sizeof(buf), "999+");
+    else snprintf(buf, sizeof(buf), "%d", shield_value);
+    settextstyle_utf8(14, 0, UI_FONT_FACE_UTF8);
+    settextcolor(text);
+    outtextxy_clipped_utf8(x + 20, y + 1, badge_w - 22, buf);
+}
+
 static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, int disabled) {
     COLORREF base = disabled ? RGB(176, 176, 170) : element_color(element);
     COLORREF bg = disabled ? RGB(198, 198, 192) : RGB(220, 229, 220);
@@ -752,8 +793,13 @@ static void draw_character_slot(const Character* ch, int slot_idx, int x, int y,
     fillrectangle(x + 1, y + 1, x + w - 1, y + 22);
     settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
+    int shield_value = alive ? ch->buffs[BUFF_SHIELD] : 0;
+    int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
     snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
-    outtextxy_clipped_utf8(x + 8, y + 4, w - 16, buf);
+    outtextxy_clipped_utf8(x + 8, y + 4, w - 16 - shield_w - (shield_w > 0 ? 6 : 0), buf);
+    if (shield_value > 0) {
+        DrawShieldBadge(x + w - shield_w - 4, y + 2, shield_value, !alive);
+    }
 
     int art_size = clamp_int(h - 42, 34, 48);
     int art_x = mirror ? x + w - art_size - 10 : x + 10;
@@ -908,8 +954,13 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
     settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
+    int shield_value = (!disabled && ch->is_alive) ? ch->buffs[BUFF_SHIELD] : 0;
+    int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
     snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
-    outtextxy_clipped_utf8(x + 10, y + 6, w - 20, buf);
+    outtextxy_clipped_utf8(x + 10, y + 6, w - 20 - shield_w - (shield_w > 0 ? 6 : 0), buf);
+    if (shield_value > 0) {
+        DrawShieldBadge(x + w - shield_w - 5, y + 5, shield_value, disabled);
+    }
     int art_w = compact ? clamp_int(w / 4, 42, 58) : clamp_int(w / 3, 64, 96);
     int art_h = compact ? clamp_int(h - 50, 28, 44) : h - 52;
     DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, ch->element, disabled);
