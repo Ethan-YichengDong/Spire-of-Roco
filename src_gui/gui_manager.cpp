@@ -42,9 +42,11 @@ static IMAGE g_art_portrait_electric;
 static IMAGE g_character_art_cache[256];
 static IMAGE g_card_art_cache[256];
 static IMAGE g_icon_shield;
+static IMAGE g_icon_power;
 static int g_character_art_loaded[256] = {0};
 static int g_card_art_loaded[256] = {0};
 static int g_icon_shield_loaded = 0;
+static int g_icon_power_loaded = 0;
 static int g_ui_assets_ready = 0;
 static int g_ui_w = 1280;
 static int g_ui_h = 720;
@@ -115,7 +117,8 @@ static void update_layout() {
     g_main_h = content_bottom - g_main_y;
     if (g_main_h < 360) g_main_h = h - g_main_y - 58;
     g_team_panel_y = g_main_y;
-    g_team_panel_h = clamp_int(content_bottom - g_team_panel_y, 248, 430);
+    g_team_panel_h = content_bottom - g_team_panel_y;
+    if (g_team_panel_h < 248) g_team_panel_h = 248;
     g_records_panel_y = g_team_panel_y + g_team_panel_h + g_ui_margin;
     g_records_panel_h = clamp_int(content_bottom - g_records_panel_y, 120, 220);
 }
@@ -389,11 +392,7 @@ static void clamp_scroll_state(UiScrollState* state, int max_offset) {
 
 static int snap_scroll_offset(int offset, const UiScrollMetrics* metrics) {
     if (!metrics) return offset;
-    int snapped = offset;
-    if (metrics->step > 1) {
-        snapped = ((offset + metrics->step / 2) / metrics->step) * metrics->step;
-    }
-    return clamp_int(snapped, 0, metrics->max_offset);
+    return clamp_int(offset, 0, metrics->max_offset);
 }
 
 static void prepare_scroll_metrics(UiScrollState* state, const UiRect* viewport, int content_h, int scroll_step, UiScrollMetrics* out) {
@@ -780,6 +779,42 @@ static void DrawCardFrame(int x, int y, int w, int h, COLORREF fill, COLORREF bo
     }
 }
 
+static void draw_character_selected_accent(int x, int y, int w, int h, int compact) {
+    COLORREF gold = RGB(239, 196, 82);
+    COLORREF green = RGB(32, 124, 83);
+    COLORREF dark_green = RGB(19, 82, 58);
+    int badge_w = compact ? 30 : 92;
+    int badge_h = compact ? 24 : 26;
+    int badge_x = x + w - badge_w - 8;
+    int badge_y = y + 8;
+
+    setlinecolor(gold);
+    rectangle(x - 1, y - 1, x + w + 1, y + h + 1);
+    rectangle(x + 2, y + 2, x + w - 2, y + h - 2);
+    setlinecolor(green);
+    rectangle(x + 4, y + 4, x + w - 4, y + h - 4);
+
+    setfillcolor(gold);
+    fillrectangle(x + 5, y + 5, x + 11, y + h - 5);
+
+    setfillcolor(green);
+    fillrectangle(badge_x, badge_y, badge_x + badge_w, badge_y + badge_h);
+    setlinecolor(dark_green);
+    rectangle(badge_x, badge_y, badge_x + badge_w, badge_y + badge_h);
+
+    setlinecolor(RGB(255, 250, 224));
+    setlinestyle(PS_SOLID, 3);
+    line(badge_x + 7, badge_y + badge_h / 2, badge_x + 13, badge_y + badge_h - 8);
+    line(badge_x + 13, badge_y + badge_h - 8, badge_x + 23, badge_y + 7);
+    setlinestyle(PS_SOLID, 1);
+
+    if (!compact) {
+        settextstyle_utf8(14, 0, UI_FONT_FACE_UTF8);
+        settextcolor(RGB(255, 250, 224));
+        outtextxy_clipped_utf8(badge_x + 30, badge_y + 4, badge_w - 34, "SELECTED");
+    }
+}
+
 static void DrawElementIcon(ElementType element, int cx, int cy, int size, int disabled) {
     COLORREF color = disabled ? RGB(135, 135, 130) : element_color(element);
     setfillcolor(color);
@@ -846,6 +881,10 @@ static IMAGE* get_shield_icon() {
     return load_cached_art(&g_icon_shield, &g_icon_shield_loaded, "assets\\icons\\shield.bmp");
 }
 
+static IMAGE* get_power_icon() {
+    return load_cached_art(&g_icon_power, &g_icon_power_loaded, "assets\\icons\\power.bmp");
+}
+
 static void draw_scaled_image_fit(IMAGE* img, int x, int y, int w, int h) {
     if (!img || img->getwidth() <= 0 || img->getheight() <= 0 || w <= 0 || h <= 0) return;
     int src_w = img->getwidth();
@@ -896,50 +935,90 @@ static void DrawCardArt(const Card* card, int x, int y, int w, int h, int disabl
     draw_image_art_or_placeholder(img, x, y, w, h, card ? card->element : ELEMENT_NORMAL, disabled);
 }
 
-static int shield_badge_width(int shield_value) {
-    if (shield_value >= 100) return 60;
-    if (shield_value >= 10) return 52;
+static int status_badge_width(int value) {
+    if (value >= 100) return 60;
+    if (value >= 10) return 52;
     return 44;
 }
 
-static void DrawShieldBadge(int x, int y, int shield_value, int disabled) {
-    if (shield_value <= 0) return;
-    int badge_w = shield_badge_width(shield_value);
+static void DrawStatusBadge(int x, int y, int value, int disabled, int power) {
+    if (value <= 0) return;
+    int badge_w = status_badge_width(value);
     int badge_h = 18;
     int icon_x = x + 3;
     int icon_y = y + 2;
-    COLORREF fill = disabled ? RGB(145, 151, 154) : RGB(64, 133, 190);
-    COLORREF border = disabled ? RGB(92, 94, 95) : RGB(32, 69, 112);
+    COLORREF fill = disabled ? RGB(145, 151, 154) : (power ? RGB(139, 82, 176) : RGB(64, 133, 190));
+    COLORREF border = disabled ? RGB(92, 94, 95) : (power ? RGB(86, 44, 122) : RGB(32, 69, 112));
     COLORREF text = disabled ? RGB(230, 230, 226) : RGB(255, 250, 224);
     char buf[16];
 
-    setfillcolor(disabled ? RGB(96, 101, 103) : RGB(41, 75, 109));
+    setfillcolor(disabled ? RGB(96, 101, 103) : (power ? RGB(66, 42, 92) : RGB(41, 75, 109)));
     fillrectangle(x, y, x + badge_w, y + badge_h);
     setlinecolor(border);
     rectangle(x, y, x + badge_w, y + badge_h);
 
-    POINT shield[5] = {
+    POINT icon_poly[5] = {
         { icon_x + 7, icon_y },
         { icon_x + 14, icon_y + 3 },
         { icon_x + 12, icon_y + 11 },
         { icon_x + 7, icon_y + 15 },
         { icon_x + 2, icon_y + 11 }
     };
-    IMAGE* shield_icon = get_shield_icon();
-    if (shield_icon) {
-        draw_scaled_image_fit(shield_icon, icon_x, icon_y, 16, 16);
+    IMAGE* icon = power ? get_power_icon() : get_shield_icon();
+    if (icon) {
+        draw_scaled_image_fit(icon, icon_x, icon_y, 16, 16);
     } else {
         setfillcolor(fill);
         setlinecolor(RGB(232, 214, 126));
-        fillpolygon(shield, 5);
-        polygon(shield, 5);
+        if (power) {
+            fillellipse(icon_x + 2, icon_y + 2, icon_x + 14, icon_y + 14);
+            line(icon_x + 7, icon_y + 2, icon_x + 10, icon_y + 9);
+            line(icon_x + 10, icon_y + 9, icon_x + 5, icon_y + 9);
+            line(icon_x + 5, icon_y + 9, icon_x + 9, icon_y + 15);
+        } else {
+            fillpolygon(icon_poly, 5);
+            polygon(icon_poly, 5);
+        }
     }
 
-    if (shield_value > 999) snprintf(buf, sizeof(buf), "999+");
-    else snprintf(buf, sizeof(buf), "%d", shield_value);
+    if (value > 999) snprintf(buf, sizeof(buf), "999+");
+    else snprintf(buf, sizeof(buf), "%d", value);
     settextstyle_utf8(14, 0, UI_FONT_FACE_UTF8);
     settextcolor(text);
     outtextxy_clipped_utf8(x + 20, y + 1, badge_w - 22, buf);
+}
+
+static void DrawShieldBadge(int x, int y, int shield_value, int disabled) {
+    DrawStatusBadge(x, y, shield_value, disabled, 0);
+}
+
+static void DrawPowerBadge(int x, int y, int power_turns, int disabled) {
+    DrawStatusBadge(x, y, power_turns, disabled, 1);
+}
+
+static int character_status_badges_width(const Character* ch, int alive) {
+    if (!ch || !alive) return 0;
+    int total = 0;
+    int shield_value = ch->buffs[BUFF_SHIELD];
+    int power_turns = ch->buffs[BUFF_POWER];
+    if (shield_value > 0) total += status_badge_width(shield_value);
+    if (power_turns > 0) total += status_badge_width(power_turns) + (total > 0 ? 4 : 0);
+    return total;
+}
+
+static void DrawCharacterStatusBadges(const Character* ch, int x, int y, int disabled) {
+    if (!ch || disabled || !ch->is_alive) return;
+    int cursor_x = x;
+    int shield_value = ch->buffs[BUFF_SHIELD];
+    int power_turns = ch->buffs[BUFF_POWER];
+    if (shield_value > 0) {
+        int w = status_badge_width(shield_value);
+        DrawShieldBadge(cursor_x, y, shield_value, disabled);
+        cursor_x += w + 4;
+    }
+    if (power_turns > 0) {
+        DrawPowerBadge(cursor_x, y, power_turns, disabled);
+    }
 }
 
 static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, int disabled) {
@@ -957,9 +1036,11 @@ static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, 
 }
 
 static int team_slot_h() {
-    int header_h = 82;
-    int available = g_team_panel_h - header_h - (UI_PAD * 2) - ((TEAM_SIZE - 1) * UI_GAP);
-    return clamp_int(available / TEAM_SIZE, 92, 118);
+    int header_h = 76;
+    int top_pad = UI_PAD + 8;
+    int bottom_pad = UI_PAD + 8;
+    int available = g_team_panel_h - header_h - top_pad - bottom_pad - ((TEAM_SIZE - 1) * UI_GAP);
+    return clamp_int(available / TEAM_SIZE, 96, 260);
 }
 
 static int team_panel_x_for_player(int player_id) {
@@ -970,9 +1051,9 @@ static void get_team_slot_rect(int player_id, int slot, UiRect* rect) {
     update_layout();
     int slot_h = team_slot_h();
     int panel_x = team_panel_x_for_player(player_id);
-    int card_w = clamp_int((slot_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN, 72, g_side_w - (UI_PAD * 2));
-    int x = panel_x + (g_side_w - card_w) / 2;
-    int y = g_team_panel_y + UI_PAD + 76 + slot * (slot_h + UI_GAP);
+    int card_w = g_side_w - (UI_PAD * 2);
+    int x = panel_x + UI_PAD;
+    int y = g_team_panel_y + 76 + UI_PAD + 8 + slot * (slot_h + UI_GAP);
     set_ui_rect(rect, x, y, card_w, slot_h);
 }
 
@@ -998,45 +1079,48 @@ static void draw_character_slot(const Character* ch, int slot_idx, int x, int y,
     COLORREF border = active ? RGB(42, 145, 92) : RGB(113, 101, 78);
     DrawCardFrame(x, y, w, h, fill, border, active, hover, !alive);
 
-    int header_h = 20;
+    int header_h = clamp_int(h / 7, 20, 32);
     setfillcolor(alive ? element_color(ch->element) : RGB(135, 135, 130));
     fillrectangle(x + 1, y + 1, x + w - 1, y + header_h);
-    settextstyle_utf8(12, 0, UI_FONT_FACE_UTF8);
+    int title_font = clamp_int(h / 11, 12, 18);
+    settextstyle_utf8(title_font, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
-    int shield_value = alive ? ch->buffs[BUFF_SHIELD] : 0;
-    int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
+    int badges_w = character_status_badges_width(ch, alive);
     snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
-    outtextxy_clipped_utf8(x + 5, y + 3, w - 10 - shield_w - (shield_w > 0 ? 4 : 0), buf);
-    if (shield_value > 0) {
-        DrawShieldBadge(x + w - shield_w - 3, y + 2, shield_value, !alive);
-    }
+    outtextxy_clipped_utf8(x + 5, y + (header_h - scaled_font_height(title_font)) / 2,
+                           w - 10 - badges_w - (badges_w > 0 ? 4 : 0), buf);
+    if (badges_w > 0) DrawCharacterStatusBadges(ch, x + w - badges_w - 3, y + (header_h - 18) / 2, !alive);
 
-    int art_h = clamp_int((h * 38) / 100, 34, 48);
-    int art_w = w - 16;
-    int art_x = x + 8;
-    int art_y = y + header_h + 7;
+    int max_art_h = h - header_h - 72;
+    if (max_art_h < 38) max_art_h = 38;
+    int art_h = clamp_int((h * 44) / 100, 38, max_art_h);
+    int art_w = w - 18;
+    int art_x = x + 9;
+    int art_y = y + header_h + 8;
     DrawCharacterArt(ch, art_x, art_y, art_w, art_h, !alive);
     if (active) {
         setfillcolor(RGB(46, 132, 87));
-        fillrectangle(x + 7, art_y + art_h + 4, x + w - 7, art_y + art_h + 18);
+        int tag_h = clamp_int(h / 11, 14, 20);
+        fillrectangle(x + 7, art_y + art_h + 5, x + w - 7, art_y + art_h + 5 + tag_h);
         settextcolor(RGB(255, 250, 230));
-        settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
-        outtextxy_centered_utf8(x + 7, art_y + art_h + 4, w - 14, 14, "ACTIVE");
+        settextstyle_utf8(clamp_int(tag_h - 3, 11, 16), 0, UI_FONT_FACE_UTF8);
+        outtextxy_centered_utf8(x + 7, art_y + art_h + 5, w - 14, tag_h, "ACTIVE");
     }
     if (!alive) {
         settextcolor(RGB(128, 45, 42));
-        settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
-        outtextxy_centered_utf8(x + 5, art_y + art_h + 5, w - 10, 14, "DEFEATED");
+        settextstyle_utf8(14, 0, UI_FONT_FACE_UTF8);
+        outtextxy_centered_utf8(x + 5, art_y + art_h + 6, w - 10, 18, "DEFEATED");
     }
 
-    int text_y = active || !alive ? art_y + art_h + 22 : art_y + art_h + 7;
-    settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
+    int text_y = active || !alive ? art_y + art_h + clamp_int(h / 9, 20, 28) : art_y + art_h + 8;
+    int body_font = clamp_int(h / 13, 11, 16);
+    settextstyle_utf8(body_font, 0, UI_FONT_FACE_UTF8);
     settextcolor(alive ? RGB(74, 67, 55) : RGB(104, 104, 100));
     snprintf(buf, sizeof(buf), "%s SPD %d", element_label(ch->element), ch->speed);
-    outtextxy_centered_utf8(x + 5, text_y, w - 10, 13, buf);
+    outtextxy_centered_utf8(x + 5, text_y, w - 10, body_font + 5, buf);
     snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
-    outtextxy_centered_utf8(x + 5, text_y + 14, w - 10, 13, buf);
-    draw_meter_colored(x + 7, y + h - 16, w - 14, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    outtextxy_centered_utf8(x + 5, text_y + body_font + 6, w - 10, body_font + 5, buf);
+    draw_meter_colored(x + 8, y + h - 18, w - 16, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
 }
 
@@ -1171,8 +1255,8 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     if (!ch) return;
     char buf[160];
     int compact = h < 150 || w < 128;
-    COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(237, 247, 230) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
-    COLORREF border = disabled ? RGB(124, 124, 119) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
+    COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(251, 245, 211) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
+    COLORREF border = disabled ? RGB(124, 124, 119) : (selected ? RGB(202, 151, 40) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
     DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
     if (!compact) {
         int header_h = clamp_int(h / 8, 24, 34);
@@ -1182,8 +1266,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
         int art_h = clamp_int((h * 52) / 100, 110, h - header_h - 96);
         int body_y = art_y + art_h + 10;
         int body_h = y + h - body_y - 12;
-        int shield_value = (!disabled && ch->is_alive) ? ch->buffs[BUFF_SHIELD] : 0;
-        int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
+        int badges_w = character_status_badges_width(ch, !disabled && ch->is_alive);
 
         setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
         fillrectangle(x + 1, y + 1, x + w - 1, y + header_h);
@@ -1191,10 +1274,8 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
         settextcolor(RGB(255, 250, 230));
         snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
         outtextxy_clipped_utf8(x + 10, y + (header_h - scaled_font_height(18)) / 2,
-                               w - 20 - shield_w - (shield_w > 0 ? 6 : 0), buf);
-        if (shield_value > 0) {
-            DrawShieldBadge(x + w - shield_w - 5, y + (header_h - 18) / 2, shield_value, disabled);
-        }
+                               w - 20 - badges_w - (badges_w > 0 ? 6 : 0), buf);
+        if (badges_w > 0) DrawCharacterStatusBadges(ch, x + w - badges_w - 5, y + (header_h - 18) / 2, disabled);
 
         draw_soft_panel(art_x, art_y, art_w, art_h, disabled ? RGB(204, 204, 198) : RGB(244, 236, 207), RGB(94, 82, 58));
         DrawCharacterArt(ch, art_x + 6, art_y + 6, art_w - 12, art_h - 12, disabled);
@@ -1208,6 +1289,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
         settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
         outtextxy_centered_utf8(x + 18, body_y + 34, w - 36, 24, buf);
         draw_meter_colored(x + 22, y + h - 28, w - 44, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+        if (selected && !disabled) draw_character_selected_accent(x, y, w, h, compact);
         present_frame();
         return;
     }
@@ -1216,13 +1298,10 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
     settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
-    int shield_value = (!disabled && ch->is_alive) ? ch->buffs[BUFF_SHIELD] : 0;
-    int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
+    int badges_w = character_status_badges_width(ch, !disabled && ch->is_alive);
     snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
-    outtextxy_clipped_utf8(x + 10, y + 6, w - 20 - shield_w - (shield_w > 0 ? 6 : 0), buf);
-    if (shield_value > 0) {
-        DrawShieldBadge(x + w - shield_w - 5, y + 5, shield_value, disabled);
-    }
+    outtextxy_clipped_utf8(x + 10, y + 6, w - 20 - badges_w - (badges_w > 0 ? 6 : 0), buf);
+    if (badges_w > 0) DrawCharacterStatusBadges(ch, x + w - badges_w - 5, y + 5, disabled);
     int art_w = compact ? clamp_int(w / 4, 42, 58) : clamp_int(w / 3, 64, 96);
     int art_h = compact ? clamp_int(h - 50, 28, 44) : h - 52;
     DrawCharacterArt(ch, x + 10, y + 38, art_w, art_h, disabled);
@@ -1236,6 +1315,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
     outtextxy_clipped_utf8(text_x, y + (compact ? h - 38 : 62), text_w, buf);
     draw_meter_colored(text_x, y + h - 20, text_w, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    if (selected && !disabled) draw_character_selected_accent(x, y, w, h, compact);
     present_frame();
 }
 
@@ -1284,6 +1364,40 @@ static int compute_card_grid_rects(int count, int start_y, int footer_y, int pre
         card_h = max_h;
         card_w = (card_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
     }
+    int total_w = columns * card_w + (columns - 1) * UI_GAP;
+    int origin_x = g_main_x + 24 + (available_w - total_w) / 2;
+    for (int i = 0; i < count; i++) {
+        int col = i % columns;
+        int row = i / columns;
+        xs[i] = origin_x + col * (card_w + UI_GAP);
+        ys[i] = start_y + row * (card_h + UI_GAP);
+        ws[i] = card_w;
+        hs[i] = card_h;
+    }
+    return columns;
+}
+
+static int compute_character_draft_rects(int count, int start_y, int footer_y, int* xs, int* ys, int* ws, int* hs) {
+    int available_w = g_main_w - 84;
+    int available_h = footer_y - start_y;
+    int columns = 4;
+    if (columns > count && count > 0) columns = count;
+    if (columns <= 0) return 0;
+    if (available_w < 240) available_w = 240;
+    if (available_h < 120) available_h = 120;
+
+    int card_w = (available_w - ((columns - 1) * UI_GAP)) / columns;
+    int card_h = (card_w * UI_CARD_ASPECT_DEN) / UI_CARD_ASPECT_NUM;
+    int max_visible_h = available_h;
+    if (card_h > max_visible_h) {
+        card_h = max_visible_h;
+        card_w = (card_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
+    }
+    if (card_h < UI_CHARACTER_CARD_H) {
+        card_h = UI_CHARACTER_CARD_H;
+        card_w = (card_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
+    }
+
     int total_w = columns * card_w + (columns - 1) * UI_GAP;
     int origin_x = g_main_x + 24 + (available_w - total_w) / 2;
     for (int i = 0; i < count; i++) {
@@ -1371,17 +1485,31 @@ static void draw_planning_shell(GameState* st, int player_id, const ActionRecord
     draw_status_bar(st, player_id, "Planning");
     draw_team_hp_panel(st);
     draw_action_records_panel(records, record_count, player_id);
-    int record_h = clamp_int(g_main_h / 4, 112, 170);
-    g_draw_y = g_main_y + UI_PAD + record_h + UI_GAP;
     Player* p = mutable_player(st, player_id);
     char buf[256];
+
+    int text_x = g_main_x + 16;
+    int text_y = g_main_y + UI_PAD + clamp_int(g_main_h / 8, 42, 86);
+    int text_w = clamp_int(g_main_w / 3, 250, 360);
     snprintf(buf, sizeof(buf), "%s", title);
-    draw_line(buf);
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(27, 33, 35));
+    outtextxy_clipped_utf8(text_x, text_y, text_w, buf);
+    text_y += 30;
     snprintf(buf, sizeof(buf), "Energy: %d/%d", p->energy, p->max_energy);
-    draw_line(buf);
-    draw_meter(g_main_x + 124, g_draw_y - 24, 220, p->energy, p->max_energy, &g_art_energy_fill);
-    draw_line("Active:");
-    print_character(&p->team[p->active_idx]);
+    outtextxy_clipped_utf8(text_x, text_y, text_w, buf);
+    draw_meter(text_x + 110, text_y + 4, clamp_int(text_w - 124, 140, 240), p->energy, p->max_energy, &g_art_energy_fill);
+    text_y += 30;
+    outtextxy_clipped_utf8(text_x, text_y, text_w, "Active:");
+
+    int active_h = clamp_int(g_main_h / 4, 170, 230);
+    int active_w = (active_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
+    int active_x = g_main_x + (g_main_w - active_w) / 2;
+    int active_y = g_main_y + UI_PAD + clamp_int(g_main_h / 18, 28, 54);
+    DrawCharacterCard(&p->team[p->active_idx], p->active_idx + 1, active_x, active_y, active_w, active_h, 1, 0, !p->team[p->active_idx].is_alive);
+
+    g_draw_y = active_y + active_h + UI_GAP;
+    if (g_draw_y < text_y + 28) g_draw_y = text_y + 28;
 }
 
 static void draw_battle_plan_screen(GameState* st, int player_id, const ActionRecord* records, int record_count, const char* title,
@@ -1449,7 +1577,7 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     int columns = compute_card_grid_rects(show, cy, footer_y - UI_GAP, UI_SKILL_CARD_H, card_x, card_y, card_w_arr, card_h_arr);
     int content_h = show > 0 ? grid_content_height(show, columns, card_h_arr[0]) : 0;
     UiScrollMetrics local_metrics = {};
-    prepare_scroll_metrics(scroll_state, &viewport, content_h, show > 0 ? card_h_arr[0] + UI_GAP : 64, &local_metrics);
+    prepare_scroll_metrics(scroll_state, &viewport, content_h, show > 0 ? clamp_int(card_h_arr[0] / 3, 64, 120) : 64, &local_metrics);
     if (scroll_metrics) *scroll_metrics = local_metrics;
     for (int i = 0; i < show; i++) {
         int x = card_x[i];
@@ -2159,7 +2287,7 @@ card_select:
                 if (viewport.h < 80) viewport.h = 80;
                 int columns = compute_planned_card_rects(p->hand_count, card_start_y, back_y, card_x, card_y, card_w, card_h);
                 int content_h = p->hand_count > 0 ? grid_content_height(p->hand_count, columns, card_h[0]) : 0;
-                prepare_scroll_metrics(&scroll_state, &viewport, content_h, p->hand_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
+                prepare_scroll_metrics(&scroll_state, &viewport, content_h, p->hand_count > 0 ? clamp_int(card_h[0] / 3, 64, 120) : 64, &scroll_metrics);
                 for (int i = 0; i < p->hand_count; i++) {
                     int y = card_y[i] - scroll_state.offset;
                     card_y[i] = y;
@@ -2649,9 +2777,9 @@ single_character_select:
             confirm_y = bottom_button_y();
             UiRect viewport = { g_main_x + 24, start_y, g_main_w - 72, confirm_y - start_y - UI_GAP };
             if (viewport.h < 80) viewport.h = 80;
-            int columns = compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
+            int columns = compute_character_draft_rects(g_char_count, start_y, confirm_y - UI_GAP, card_x, card_y, card_w, card_h);
             int content_h = g_char_count > 0 ? grid_content_height(g_char_count, columns, card_h[0]) : 0;
-            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
+            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? clamp_int(card_h[0] / 3, 64, 120) : 64, &scroll_metrics);
             for (int i = 0; i < g_char_count; i++) {
                 int y = card_y[i] - scroll_state.offset;
                 card_y[i] = y;
@@ -2759,9 +2887,9 @@ multi_character_select:
             int start_y = g_draw_y + 8;
             UiRect viewport = { g_main_x + 24, start_y, g_main_w - 72, confirm_y - start_y - UI_GAP };
             if (viewport.h < 80) viewport.h = 80;
-            int columns = compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
+            int columns = compute_character_draft_rects(g_char_count, start_y, confirm_y - UI_GAP, card_x, card_y, card_w, card_h);
             int content_h = g_char_count > 0 ? grid_content_height(g_char_count, columns, card_h[0]) : 0;
-            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
+            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? clamp_int(card_h[0] / 3, 64, 120) : 64, &scroll_metrics);
             for (int i = 0; i < g_char_count; i++) {
                 int y = card_y[i] - scroll_state.offset;
                 card_y[i] = y;

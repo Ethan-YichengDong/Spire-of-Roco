@@ -1,5 +1,5 @@
 id,name,element,hp,speed
-1,Squirtle,1,100,50
-2,Charmander,2,90,55
-3,Bulbasaur,3,110,45
-4,Pikachu,4,80,60
+1,猪小桐,4,100,50
+2,水晶猪,1,90,55
+3,爆破小猪,2,110,45
+4,魔法少猪,3,80,60
