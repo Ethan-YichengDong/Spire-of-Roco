@@ -11,8 +11,10 @@
 
 #define UI_PAD 12
 #define UI_GAP 8
-#define UI_CARD_H 128
-#define UI_SKILL_CARD_H 148
+#define UI_CARD_H 176
+#define UI_SKILL_CARD_H 212
+#define UI_CARD_ASPECT_NUM 7
+#define UI_CARD_ASPECT_DEN 10
 #define UI_CHARACTER_CARD_H 148
 #define UI_BUTTON_H 50
 #define UI_FONT_FACE_UTF8 "Microsoft YaHei"
@@ -37,6 +39,12 @@ static IMAGE g_art_portrait_water;
 static IMAGE g_art_portrait_fire;
 static IMAGE g_art_portrait_grass;
 static IMAGE g_art_portrait_electric;
+static IMAGE g_character_art_cache[256];
+static IMAGE g_card_art_cache[256];
+static IMAGE g_icon_shield;
+static int g_character_art_loaded[256] = {0};
+static int g_card_art_loaded[256] = {0};
+static int g_icon_shield_loaded = 0;
 static int g_ui_assets_ready = 0;
 static int g_ui_w = 1280;
 static int g_ui_h = 720;
@@ -71,6 +79,7 @@ static void draw_background_shell();
 static void present_frame();
 static int point_in_rect(int x, int y, int rx, int ry, int rw, int rh);
 static int layout_changed_since(int* seen_version);
+static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, int disabled);
 
 static int clamp_int(int value, int min_value, int max_value) {
     if (value < min_value) return min_value;
@@ -343,6 +352,22 @@ typedef struct {
     int h;
 } UiRect;
 
+typedef struct {
+    int offset;
+    int dragging;
+    int drag_y;
+    int drag_offset;
+} UiScrollState;
+
+typedef struct {
+    UiRect viewport;
+    UiRect thumb;
+    int content_h;
+    int max_offset;
+    int step;
+    int visible;
+} UiScrollMetrics;
+
 static void set_ui_rect(UiRect* rect, int x, int y, int w, int h) {
     if (!rect) return;
     rect->x = x;
@@ -353,6 +378,101 @@ static void set_ui_rect(UiRect* rect, int x, int y, int w, int h) {
 
 static int point_in_ui_rect(int x, int y, const UiRect* rect) {
     return rect && point_in_rect(x, y, rect->x, rect->y, rect->w, rect->h);
+}
+
+static void clamp_scroll_state(UiScrollState* state, int max_offset) {
+    if (!state) return;
+    if (max_offset < 0) max_offset = 0;
+    state->offset = clamp_int(state->offset, 0, max_offset);
+    if (max_offset == 0) state->dragging = 0;
+}
+
+static int snap_scroll_offset(int offset, const UiScrollMetrics* metrics) {
+    if (!metrics) return offset;
+    int snapped = offset;
+    if (metrics->step > 1) {
+        snapped = ((offset + metrics->step / 2) / metrics->step) * metrics->step;
+    }
+    return clamp_int(snapped, 0, metrics->max_offset);
+}
+
+static void prepare_scroll_metrics(UiScrollState* state, const UiRect* viewport, int content_h, int scroll_step, UiScrollMetrics* out) {
+    if (!viewport || !out) return;
+    out->viewport = *viewport;
+    out->content_h = content_h;
+    out->max_offset = content_h > viewport->h ? content_h - viewport->h : 0;
+    out->step = scroll_step > 1 ? scroll_step : 64;
+    out->visible = out->max_offset > 0;
+    set_ui_rect(&out->thumb, 0, 0, 0, 0);
+    clamp_scroll_state(state, out->max_offset);
+    if (state && out->visible) state->offset = snap_scroll_offset(state->offset, out);
+    if (!out->visible) return;
+
+    int track_x = viewport->x + viewport->w + 6;
+    int track_y = viewport->y;
+    int track_h = viewport->h;
+    int thumb_h = (viewport->h * viewport->h) / content_h;
+    thumb_h = clamp_int(thumb_h, 36, track_h);
+    int movable = track_h - thumb_h;
+    int thumb_y = track_y;
+    if (out->max_offset > 0 && movable > 0 && state) {
+        thumb_y = track_y + (state->offset * movable) / out->max_offset;
+    }
+    set_ui_rect(&out->thumb, track_x, thumb_y, 12, thumb_h);
+}
+
+static void draw_scrollbar(const UiScrollMetrics* metrics) {
+    if (!metrics || !metrics->visible) return;
+    int track_x = metrics->viewport.x + metrics->viewport.w + 6;
+    int track_y = metrics->viewport.y;
+    int track_h = metrics->viewport.h;
+    setfillcolor(RGB(214, 207, 177));
+    solidrectangle(track_x, track_y, track_x + 12, track_y + track_h);
+    setlinecolor(RGB(122, 106, 73));
+    rectangle(track_x, track_y, track_x + 12, track_y + track_h);
+    setfillcolor(RGB(91, 117, 139));
+    solidrectangle(metrics->thumb.x + 2, metrics->thumb.y + 2,
+                   metrics->thumb.x + metrics->thumb.w - 2,
+                   metrics->thumb.y + metrics->thumb.h - 2);
+}
+
+static int handle_scroll_message(UiScrollState* state, const UiScrollMetrics* metrics, const MOUSEMSG* msg) {
+    if (!state || !metrics || !msg || !metrics->visible) return 0;
+    int track_x = metrics->viewport.x + metrics->viewport.w + 6;
+    UiRect track = { track_x, metrics->viewport.y, 12, metrics->viewport.h };
+    if (msg->uMsg == WM_MOUSEWHEEL && point_in_ui_rect(msg->x, msg->y, &metrics->viewport)) {
+        int delta = msg->wheel > 0 ? -metrics->step : metrics->step;
+        state->offset = clamp_int(state->offset + delta, 0, metrics->max_offset);
+        state->offset = snap_scroll_offset(state->offset, metrics);
+        return 1;
+    }
+    if (msg->uMsg == WM_LBUTTONDOWN && point_in_ui_rect(msg->x, msg->y, &metrics->thumb)) {
+        state->dragging = 1;
+        state->drag_y = msg->y;
+        state->drag_offset = state->offset;
+        return 1;
+    }
+    if (msg->uMsg == WM_LBUTTONDOWN && point_in_ui_rect(msg->x, msg->y, &track)) {
+        int page = metrics->viewport.h - 32;
+        state->offset += (msg->y < metrics->thumb.y) ? -page : page;
+        state->offset = snap_scroll_offset(state->offset, metrics);
+        return 1;
+    }
+    if (msg->uMsg == WM_MOUSEMOVE && state->dragging) {
+        int before = state->offset;
+        int track_h = metrics->viewport.h - metrics->thumb.h;
+        if (track_h > 0) {
+            int dy = msg->y - state->drag_y;
+            state->offset = state->drag_offset + (dy * metrics->max_offset) / track_h;
+            state->offset = snap_scroll_offset(state->offset, metrics);
+        }
+        return state->offset != before;
+    }
+    if (msg->uMsg == WM_LBUTTONUP && state->dragging) {
+        state->dragging = 0;
+        return 1;
+    }
+    return 0;
 }
 
 static COLORREF element_color(ElementType element) {
@@ -695,6 +815,87 @@ static void DrawElementIcon(ElementType element, int cx, int cy, int size, int d
     }
 }
 
+static IMAGE* load_cached_art(IMAGE* img, int* state, const char* path) {
+    if (!state || !img || !path || path[0] == '\0') return NULL;
+    if (*state == 0) {
+        loadimage(img, path);
+        *state = (img->getwidth() > 0 && img->getheight() > 0) ? 1 : -1;
+    }
+    return (*state == 1) ? img : NULL;
+}
+
+static IMAGE* get_character_art(int char_id) {
+    if (char_id <= 0 || char_id >= 256) return NULL;
+    char path[128];
+    snprintf(path, sizeof(path), "assets\\characters\\char_%d.bmp", char_id);
+    return load_cached_art(&g_character_art_cache[char_id],
+                           &g_character_art_loaded[char_id],
+                           path);
+}
+
+static IMAGE* get_card_art(int card_id) {
+    if (card_id <= 0 || card_id >= 256) return NULL;
+    char path[128];
+    snprintf(path, sizeof(path), "assets\\cards\\card_%d.bmp", card_id);
+    return load_cached_art(&g_card_art_cache[card_id],
+                           &g_card_art_loaded[card_id],
+                           path);
+}
+
+static IMAGE* get_shield_icon() {
+    return load_cached_art(&g_icon_shield, &g_icon_shield_loaded, "assets\\icons\\shield.bmp");
+}
+
+static void draw_scaled_image_fit(IMAGE* img, int x, int y, int w, int h) {
+    if (!img || img->getwidth() <= 0 || img->getheight() <= 0 || w <= 0 || h <= 0) return;
+    int src_w = img->getwidth();
+    int src_h = img->getheight();
+    int draw_w = w;
+    int draw_h = (src_h * draw_w) / src_w;
+    if (draw_h > h) {
+        draw_h = h;
+        draw_w = (src_w * draw_h) / src_h;
+    }
+    if (draw_w <= 0) draw_w = 1;
+    if (draw_h <= 0) draw_h = 1;
+    int draw_x = x + (w - draw_w) / 2;
+    int draw_y = y + (h - draw_h) / 2;
+    HDC dst_hdc = GetImageHDC(NULL);
+    HDC src_hdc = GetImageHDC(img);
+    SetStretchBltMode(dst_hdc, HALFTONE);
+    StretchBlt(dst_hdc, draw_x, draw_y, draw_w, draw_h,
+               src_hdc, 0, 0, src_w, src_h, SRCCOPY);
+}
+
+static int draw_image_art_or_placeholder(IMAGE* img, int x, int y, int w, int h, ElementType element, int disabled) {
+    if (img && img->getwidth() > 0 && img->getheight() > 0) {
+        setfillcolor(disabled ? RGB(198, 198, 192) : RGB(220, 229, 220));
+        fillrectangle(x, y, x + w, y + h);
+        draw_scaled_image_fit(img, x, y, w, h);
+        setlinecolor(disabled ? RGB(142, 142, 136) : RGB(101, 94, 79));
+        rectangle(x, y, x + w, y + h);
+        if (disabled) {
+            setlinecolor(RGB(142, 142, 136));
+            line(x + 6, y + 6, x + w - 6, y + h - 6);
+            line(x + w - 6, y + 6, x + 6, y + h - 6);
+        }
+        return 1;
+    }
+
+    DrawPlaceholderArt(x, y, w, h, element, disabled);
+    return 0;
+}
+
+static void DrawCharacterArt(const Character* ch, int x, int y, int w, int h, int disabled) {
+    IMAGE* img = ch ? get_character_art(ch->char_id) : NULL;
+    draw_image_art_or_placeholder(img, x, y, w, h, ch ? ch->element : ELEMENT_NORMAL, disabled);
+}
+
+static void DrawCardArt(const Card* card, int x, int y, int w, int h, int disabled) {
+    IMAGE* img = card ? get_card_art(card->card_id) : NULL;
+    draw_image_art_or_placeholder(img, x, y, w, h, card ? card->element : ELEMENT_NORMAL, disabled);
+}
+
 static int shield_badge_width(int shield_value) {
     if (shield_value >= 100) return 60;
     if (shield_value >= 10) return 52;
@@ -724,10 +925,15 @@ static void DrawShieldBadge(int x, int y, int shield_value, int disabled) {
         { icon_x + 7, icon_y + 15 },
         { icon_x + 2, icon_y + 11 }
     };
-    setfillcolor(fill);
-    setlinecolor(RGB(232, 214, 126));
-    fillpolygon(shield, 5);
-    polygon(shield, 5);
+    IMAGE* shield_icon = get_shield_icon();
+    if (shield_icon) {
+        draw_scaled_image_fit(shield_icon, icon_x, icon_y, 16, 16);
+    } else {
+        setfillcolor(fill);
+        setlinecolor(RGB(232, 214, 126));
+        fillpolygon(shield, 5);
+        polygon(shield, 5);
+    }
 
     if (shield_value > 999) snprintf(buf, sizeof(buf), "999+");
     else snprintf(buf, sizeof(buf), "%d", shield_value);
@@ -753,7 +959,7 @@ static void DrawPlaceholderArt(int x, int y, int w, int h, ElementType element, 
 static int team_slot_h() {
     int header_h = 82;
     int available = g_team_panel_h - header_h - (UI_PAD * 2) - ((TEAM_SIZE - 1) * UI_GAP);
-    return clamp_int(available / TEAM_SIZE, 78, 108);
+    return clamp_int(available / TEAM_SIZE, 92, 118);
 }
 
 static int team_panel_x_for_player(int player_id) {
@@ -764,9 +970,10 @@ static void get_team_slot_rect(int player_id, int slot, UiRect* rect) {
     update_layout();
     int slot_h = team_slot_h();
     int panel_x = team_panel_x_for_player(player_id);
-    int x = panel_x + UI_PAD;
+    int card_w = clamp_int((slot_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN, 72, g_side_w - (UI_PAD * 2));
+    int x = panel_x + (g_side_w - card_w) / 2;
     int y = g_team_panel_y + UI_PAD + 76 + slot * (slot_h + UI_GAP);
-    set_ui_rect(rect, x, y, g_side_w - (UI_PAD * 2), slot_h);
+    set_ui_rect(rect, x, y, card_w, slot_h);
 }
 
 static int hit_team_slot(int mouse_x, int mouse_y, int player_id, UiRect* out_rect) {
@@ -784,48 +991,52 @@ static int hit_team_slot(int mouse_x, int mouse_y, int player_id, UiRect* out_re
 static void draw_character_slot(const Character* ch, int slot_idx, int x, int y, int w, int h,
                                 int active, int hover, int disabled, int mirror) {
     if (!ch) return;
+    (void)mirror;
     char buf[160];
     int alive = ch->is_alive && !disabled;
     COLORREF fill = alive ? (active ? RGB(237, 248, 233) : RGB(238, 233, 205)) : RGB(204, 204, 198);
     COLORREF border = active ? RGB(42, 145, 92) : RGB(113, 101, 78);
     DrawCardFrame(x, y, w, h, fill, border, active, hover, !alive);
+
+    int header_h = 20;
     setfillcolor(alive ? element_color(ch->element) : RGB(135, 135, 130));
-    fillrectangle(x + 1, y + 1, x + w - 1, y + 22);
-    settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
+    fillrectangle(x + 1, y + 1, x + w - 1, y + header_h);
+    settextstyle_utf8(12, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
     int shield_value = alive ? ch->buffs[BUFF_SHIELD] : 0;
     int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
     snprintf(buf, sizeof(buf), "%d  %s", slot_idx + 1, ch->name);
-    outtextxy_clipped_utf8(x + 8, y + 4, w - 16 - shield_w - (shield_w > 0 ? 6 : 0), buf);
+    outtextxy_clipped_utf8(x + 5, y + 3, w - 10 - shield_w - (shield_w > 0 ? 4 : 0), buf);
     if (shield_value > 0) {
-        DrawShieldBadge(x + w - shield_w - 4, y + 2, shield_value, !alive);
+        DrawShieldBadge(x + w - shield_w - 3, y + 2, shield_value, !alive);
     }
 
-    int art_size = clamp_int(h - 42, 34, 48);
-    int art_x = mirror ? x + w - art_size - 10 : x + 10;
-    int art_y = y + 30;
-    DrawPlaceholderArt(art_x, art_y, art_size, art_size, ch->element, !alive);
-    int text_x = mirror ? x + 10 : art_x + art_size + 10;
-    int text_w = w - art_size - 30;
-    int meter_y = y + h - 18;
-    int compact = h < 96;
+    int art_h = clamp_int((h * 38) / 100, 34, 48);
+    int art_w = w - 16;
+    int art_x = x + 8;
+    int art_y = y + header_h + 7;
+    DrawCharacterArt(ch, art_x, art_y, art_w, art_h, !alive);
     if (active) {
         setfillcolor(RGB(46, 132, 87));
-        fillrectangle(mirror ? x + 8 : x + w - 70, y + 27, mirror ? x + 70 : x + w - 8, y + 45);
+        fillrectangle(x + 7, art_y + art_h + 4, x + w - 7, art_y + art_h + 18);
         settextcolor(RGB(255, 250, 230));
-        outtextxy_clipped_utf8(mirror ? x + 14 : x + w - 64, y + 28, 54, "ACTIVE");
+        settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
+        outtextxy_centered_utf8(x + 7, art_y + art_h + 4, w - 14, 14, "ACTIVE");
     }
     if (!alive) {
         settextcolor(RGB(128, 45, 42));
-        outtextxy_clipped_utf8(text_x, y + 28, text_w, "DEFEATED");
+        settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
+        outtextxy_centered_utf8(x + 5, art_y + art_h + 5, w - 10, 14, "DEFEATED");
     }
-    settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
+
+    int text_y = active || !alive ? art_y + art_h + 22 : art_y + art_h + 7;
+    settextstyle_utf8(11, 0, UI_FONT_FACE_UTF8);
     settextcolor(alive ? RGB(74, 67, 55) : RGB(104, 104, 100));
-    snprintf(buf, sizeof(buf), "%s  SPD %d", element_label(ch->element), ch->speed);
-    outtextxy_clipped_utf8(text_x, y + (compact ? 34 : 50), text_w, buf);
+    snprintf(buf, sizeof(buf), "%s SPD %d", element_label(ch->element), ch->speed);
+    outtextxy_centered_utf8(x + 5, text_y, w - 10, 13, buf);
     snprintf(buf, sizeof(buf), "HP %d/%d", ch->hp, ch->max_hp);
-    outtextxy_clipped_utf8(text_x, y + (compact ? 52 : 70), text_w, buf);
-    draw_meter_colored(x + 10, meter_y, w - 20, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+    outtextxy_centered_utf8(x + 5, text_y + 14, w - 10, 13, buf);
+    draw_meter_colored(x + 7, y + h - 16, w - 14, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
     settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
 }
 
@@ -897,40 +1108,53 @@ static void build_card_stats_text(const Card* c, char* out, size_t out_size) {
 static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, int selected, int hover, int disabled, int quantity) {
     if (!c) return;
     char buf[256];
-    int compact = h < 112 || w < 210;
+    int compact = h < 150 || w < 128;
     COLORREF elem = disabled ? RGB(128, 128, 128) : element_color(c->element);
     COLORREF fill = disabled ? RGB(210, 211, 205) : (selected ? RGB(240, 248, 231) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
     COLORREF border = disabled ? RGB(126, 126, 120) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
     DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
+
+    int header_h = clamp_int(h / 7, 22, 30);
+    int cost_size = clamp_int(header_h + 6, 24, 34);
+    int art_x = x + 10;
+    int art_y = y + header_h + 10;
+    int art_w = w - 20;
+    int art_h = compact ? clamp_int((h * 38) / 100, 38, 62) : clamp_int((h * 46) / 100, 70, 104);
+    int body_y = art_y + art_h + 8;
+    int body_h = y + h - body_y - 10;
+
     setfillcolor(elem);
-    fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
-    settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
+    fillrectangle(x + 1, y + 1, x + w - 1, y + header_h);
+    settextstyle_utf8(compact ? 14 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(255, 250, 230));
     snprintf(buf, sizeof(buf), "[%d] %s", idx, c->name);
-    outtextxy_clipped_utf8(x + 10, y + 6, w - 56, buf);
+    outtextxy_clipped_utf8(x + 9, y + (header_h - scaled_font_height(compact ? 14 : 18)) / 2, w - cost_size - 18, buf);
 
     setfillcolor(disabled ? RGB(150, 150, 145) : RGB(244, 226, 134));
-    fillrectangle(x + w - 42, y + 5, x + w - 10, y + 25);
+    fillrectangle(x + w - cost_size - 7, y + 5, x + w - 7, y + 5 + cost_size);
     setlinecolor(RGB(93, 78, 38));
-    rectangle(x + w - 42, y + 5, x + w - 10, y + 25);
+    rectangle(x + w - cost_size - 7, y + 5, x + w - 7, y + 5 + cost_size);
     snprintf(buf, sizeof(buf), "%d", c->energy_cost);
+    settextstyle_utf8(compact ? 15 : 18, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(47, 39, 18));
-    outtextxy_utf8(x + w - 31, y + 7, buf);
+    outtextxy_centered_utf8(x + w - cost_size - 7, y + 7, cost_size, cost_size - 4, buf);
 
-    int art_w = compact ? clamp_int(w / 4, 46, 62) : clamp_int(w / 3, 64, 92);
-    int art_h = h - 48;
-    if (art_h < 40) art_h = 40;
-    DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, c->element, disabled);
-    int text_x = x + art_w + 20;
-    int text_w = w - art_w - 30;
-    settextstyle_utf8(compact ? 15 : 16, 0, UI_FONT_FACE_UTF8);
+    draw_soft_panel(art_x, art_y, art_w, art_h, disabled ? RGB(204, 204, 198) : RGB(244, 236, 207), RGB(94, 82, 58));
+    DrawCardArt(c, art_x + 4, art_y + 4, art_w - 8, art_h - 8, disabled);
+
+    draw_soft_panel(x + 10, body_y, w - 20, body_h, disabled ? RGB(205, 207, 202) : RGB(246, 241, 222), RGB(132, 116, 83));
+    int text_x = x + 18;
+    int text_w = w - 36;
+    settextstyle_utf8(compact ? 12 : 15, 0, UI_FONT_FACE_UTF8);
     settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
     snprintf(buf, sizeof(buf), "%s / %s", element_label(c->element), card_type_label(c->type));
-    outtextxy_clipped_utf8(text_x, y + 38, text_w, buf);
+    outtextxy_clipped_utf8(text_x, body_y + 6, text_w, buf);
     build_card_stats_text(c, buf, sizeof(buf));
-    outtextxy_clipped_utf8(text_x, y + 58, text_w, buf);
+    outtextxy_clipped_utf8(text_x, body_y + (compact ? 22 : 28), text_w, buf);
     snprintf(buf, sizeof(buf), "Cost %d", c->energy_cost);
-    outtextxy_clipped_utf8(text_x, y + 78, text_w, buf);
+    if (!compact) {
+        outtextxy_clipped_utf8(text_x, body_y + 50, text_w, buf);
+    }
     if (quantity > 0) {
         snprintf(buf, sizeof(buf), "x%d", quantity);
         setfillcolor(RGB(50, 68, 86));
@@ -946,10 +1170,48 @@ static void draw_card_panel(const Card* c, int idx, int x, int y, int w, int h, 
 static void draw_character_option_panel(const Character* ch, int idx, int x, int y, int w, int h, int selected, int hover, int disabled) {
     if (!ch) return;
     char buf[160];
-    int compact = h < 112;
+    int compact = h < 150 || w < 128;
     COLORREF fill = disabled ? RGB(207, 207, 201) : (selected ? RGB(237, 247, 230) : (hover ? RGB(248, 240, 218) : RGB(234, 228, 200)));
     COLORREF border = disabled ? RGB(124, 124, 119) : (selected ? RGB(52, 150, 99) : (hover ? RGB(80, 113, 154) : RGB(85, 74, 56)));
     DrawCardFrame(x, y, w, h, fill, border, selected, hover, disabled);
+    if (!compact) {
+        int header_h = clamp_int(h / 8, 24, 34);
+        int art_x = x + 12;
+        int art_y = y + header_h + 12;
+        int art_w = w - 24;
+        int art_h = clamp_int((h * 52) / 100, 110, h - header_h - 96);
+        int body_y = art_y + art_h + 10;
+        int body_h = y + h - body_y - 12;
+        int shield_value = (!disabled && ch->is_alive) ? ch->buffs[BUFF_SHIELD] : 0;
+        int shield_w = shield_value > 0 ? shield_badge_width(shield_value) : 0;
+
+        setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
+        fillrectangle(x + 1, y + 1, x + w - 1, y + header_h);
+        settextstyle_utf8(18, 0, UI_FONT_FACE_UTF8);
+        settextcolor(RGB(255, 250, 230));
+        snprintf(buf, sizeof(buf), "[%d] %s", idx, ch->name);
+        outtextxy_clipped_utf8(x + 10, y + (header_h - scaled_font_height(18)) / 2,
+                               w - 20 - shield_w - (shield_w > 0 ? 6 : 0), buf);
+        if (shield_value > 0) {
+            DrawShieldBadge(x + w - shield_w - 5, y + (header_h - 18) / 2, shield_value, disabled);
+        }
+
+        draw_soft_panel(art_x, art_y, art_w, art_h, disabled ? RGB(204, 204, 198) : RGB(244, 236, 207), RGB(94, 82, 58));
+        DrawCharacterArt(ch, art_x + 6, art_y + 6, art_w - 12, art_h - 12, disabled);
+
+        draw_soft_panel(x + 12, body_y, w - 24, body_h, disabled ? RGB(205, 207, 202) : RGB(246, 241, 222), RGB(132, 116, 83));
+        settextstyle_utf8(16, 0, UI_FONT_FACE_UTF8);
+        settextcolor(disabled ? RGB(92, 92, 88) : RGB(27, 33, 35));
+        snprintf(buf, sizeof(buf), "%s  Speed %d", element_label(ch->element), ch->speed);
+        outtextxy_centered_utf8(x + 18, body_y + 8, w - 36, 24, buf);
+        snprintf(buf, sizeof(buf), "HP %d/%d%s", ch->hp, ch->max_hp, ch->is_alive ? "" : "  Defeated");
+        settextcolor(disabled ? RGB(104, 104, 100) : RGB(74, 67, 55));
+        outtextxy_centered_utf8(x + 18, body_y + 34, w - 36, 24, buf);
+        draw_meter_colored(x + 22, y + h - 28, w - 44, ch->hp, ch->max_hp, hp_state_color(ch->hp, ch->max_hp));
+        present_frame();
+        return;
+    }
+
     setfillcolor(disabled ? RGB(128, 128, 128) : element_color(ch->element));
     fillrectangle(x + 1, y + 1, x + w - 1, y + 28);
     settextstyle_utf8(compact ? 16 : 18, 0, UI_FONT_FACE_UTF8);
@@ -963,7 +1225,7 @@ static void draw_character_option_panel(const Character* ch, int idx, int x, int
     }
     int art_w = compact ? clamp_int(w / 4, 42, 58) : clamp_int(w / 3, 64, 96);
     int art_h = compact ? clamp_int(h - 50, 28, 44) : h - 52;
-    DrawPlaceholderArt(x + 10, y + 38, art_w, art_h, ch->element, disabled);
+    DrawCharacterArt(ch, x + 10, y + 38, art_w, art_h, disabled);
     int text_x = x + art_w + 20;
     int text_w = w - art_w - 30;
     settextstyle_utf8(compact ? 15 : 16, 0, UI_FONT_FACE_UTF8);
@@ -986,18 +1248,19 @@ static void DrawSkillCard(const Card* c, int idx, int x, int y, int w, int h, in
 }
 
 static int compute_planned_card_rects(int card_count, int start_y, int footer_y, int* xs, int* ys, int* ws, int* hs) {
-    int available_w = g_main_w - 48;
-    int available_h = footer_y - start_y - UI_GAP;
-    int single_rows = available_h / (UI_CARD_H + UI_GAP);
-    int columns = (card_count > single_rows && available_w >= 560) ? 2 : 1;
-    int rows = (card_count + columns - 1) / columns;
-    int card_h = UI_CARD_H;
-    if (rows > 0) {
-        card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
-        card_h = clamp_int(card_h, 104, UI_CARD_H);
+    (void)footer_y;
+    int available_w = g_main_w - 84;
+    int columns = 4;
+    if (columns > card_count && card_count > 0) columns = card_count;
+    int card_w = (available_w - ((columns - 1) * UI_GAP)) / columns;
+    int card_h = (card_w * UI_CARD_ASPECT_DEN) / UI_CARD_ASPECT_NUM;
+    int max_h = UI_SKILL_CARD_H * 2;
+    if (card_h > max_h) {
+        card_h = max_h;
+        card_w = (card_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
     }
-    int card_w = (columns == 2) ? ((available_w - UI_GAP) / 2) : clamp_int(available_w, 280, 680);
-    int origin_x = g_main_x + 24;
+    int total_w = columns * card_w + (columns - 1) * UI_GAP;
+    int origin_x = g_main_x + 24 + (available_w - total_w) / 2;
     for (int i = 0; i < card_count; i++) {
         int col = i % columns;
         int row = i / columns;
@@ -1010,17 +1273,19 @@ static int compute_planned_card_rects(int card_count, int start_y, int footer_y,
 }
 
 static int compute_card_grid_rects(int count, int start_y, int footer_y, int preferred_h, int* xs, int* ys, int* ws, int* hs) {
-    int available_w = g_main_w - 48;
-    int available_h = footer_y - start_y - UI_GAP;
-    int columns = available_w >= 620 ? 2 : 1;
-    int rows = (count + columns - 1) / columns;
+    (void)footer_y;
+    int available_w = g_main_w - 84;
+    int columns = 4;
+    if (columns > count && count > 0) columns = count;
     int card_w = (available_w - ((columns - 1) * UI_GAP)) / columns;
-    int card_h = preferred_h;
-    if (rows > 0) {
-        card_h = (available_h - ((rows - 1) * UI_GAP)) / rows;
-        card_h = clamp_int(card_h, 104, preferred_h);
+    int card_h = (card_w * UI_CARD_ASPECT_DEN) / UI_CARD_ASPECT_NUM;
+    int max_h = preferred_h * 2;
+    if (card_h > max_h) {
+        card_h = max_h;
+        card_w = (card_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
     }
-    int origin_x = g_main_x + 24;
+    int total_w = columns * card_w + (columns - 1) * UI_GAP;
+    int origin_x = g_main_x + 24 + (available_w - total_w) / 2;
     for (int i = 0; i < count; i++) {
         int col = i % columns;
         int row = i / columns;
@@ -1032,10 +1297,10 @@ static int compute_card_grid_rects(int count, int start_y, int footer_y, int pre
     return columns;
 }
 
-static int visible_card_rows_for_current_layout() {
-    int start_y = g_main_y + 112;
-    int available_h = bottom_button_y() - start_y - UI_GAP;
-    return clamp_int((available_h / (UI_CARD_H + UI_GAP)) * 2, 3, 8);
+static int grid_content_height(int count, int columns, int card_h) {
+    if (count <= 0 || columns <= 0 || card_h <= 0) return 0;
+    int rows = (count + columns - 1) / columns;
+    return rows * card_h + (rows - 1) * UI_GAP;
 }
 
 static void draw_center_battlefield_frame(const char* title, UiRect* out_rect) {
@@ -1152,7 +1417,8 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
                                    int selected_idx, int hover_card, int hover_minus, int hover_plus,
                                    int hover_finish, int hover_confirm,
                                    UiRect* card_rects, UiRect* minus_rects, UiRect* plus_rects,
-                                   UiRect* finish_rect, UiRect* confirm_rect) {
+                                   UiRect* finish_rect, UiRect* confirm_rect,
+                                   UiScrollState* scroll_state, UiScrollMetrics* scroll_metrics) {
     char buf[256];
     begin_deferred_present();
     reset_draw_y();
@@ -1178,26 +1444,40 @@ static void draw_deck_build_screen(int player_id, int selected_count, int max_se
     int card_w_arr[MAX_GLOBAL_CARDS] = {0};
     int card_h_arr[MAX_GLOBAL_CARDS] = {0};
     int footer_y = bottom_button_y();
-    compute_card_grid_rects(show, cy, footer_y - UI_GAP, UI_SKILL_CARD_H, card_x, card_y, card_w_arr, card_h_arr);
+    UiRect viewport = { g_main_x + 24, cy, g_main_w - 72, footer_y - cy - UI_GAP };
+    if (viewport.h < 80) viewport.h = 80;
+    int columns = compute_card_grid_rects(show, cy, footer_y - UI_GAP, UI_SKILL_CARD_H, card_x, card_y, card_w_arr, card_h_arr);
+    int content_h = show > 0 ? grid_content_height(show, columns, card_h_arr[0]) : 0;
+    UiScrollMetrics local_metrics = {};
+    prepare_scroll_metrics(scroll_state, &viewport, content_h, show > 0 ? card_h_arr[0] + UI_GAP : 64, &local_metrics);
+    if (scroll_metrics) *scroll_metrics = local_metrics;
     for (int i = 0; i < show; i++) {
         int x = card_x[i];
-        int y = card_y[i];
+        int y = card_y[i] - (scroll_state ? scroll_state->offset : 0);
         int card_w = card_w_arr[i];
         int ch = card_h_arr[i];
         set_ui_rect(card_rects ? &card_rects[i] : NULL, x, y, card_w, ch);
+        set_ui_rect(minus_rects ? &minus_rects[i] : NULL, 0, 0, 0, 0);
+        set_ui_rect(plus_rects ? &plus_rects[i] : NULL, 0, 0, 0, 0);
+        if (y < viewport.y || y + ch > viewport.y + viewport.h) continue;
         DrawSkillCard(&g_all_cards[i], i, x, y, card_w, ch, i == selected_idx || (qty && qty[i] > 0), hover_card == i, 0, qty ? qty[i] : 0);
         if (qty) {
-            int x_plus = x + card_w - 48;
-            int x_qty = x_plus - 52;
-            int x_minus = x_qty - 44;
-            int control_y = y + ch - 42;
-            set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, control_y, 36, 32);
-            set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, control_y, 36, 32);
-            draw_button_state(x_minus, control_y, 36, 32, "-", 0, hover_minus == i, qty[i] <= 0);
-            draw_quantity_control(x_qty, control_y, 44, 32, qty[i]);
-            draw_button_state(x_plus, control_y, 36, 32, "+", 0, hover_plus == i, selected_count >= max_select);
+            int button_w = card_w < 138 ? 28 : 36;
+            int qty_w = card_w < 138 ? 34 : 44;
+            int control_h = 30;
+            int control_total_w = button_w * 2 + qty_w + UI_GAP * 2;
+            int x_minus = x + (card_w - control_total_w) / 2;
+            int x_qty = x_minus + button_w + UI_GAP;
+            int x_plus = x_qty + qty_w + UI_GAP;
+            int control_y = y + ch - control_h - 8;
+            set_ui_rect(minus_rects ? &minus_rects[i] : NULL, x_minus, control_y, button_w, control_h);
+            set_ui_rect(plus_rects ? &plus_rects[i] : NULL, x_plus, control_y, button_w, control_h);
+            draw_button_state(x_minus, control_y, button_w, control_h, "-", 0, hover_minus == i, qty[i] <= 0);
+            draw_quantity_control(x_qty, control_y, qty_w, control_h, qty[i]);
+            draw_button_state(x_plus, control_y, button_w, control_h, "+", 0, hover_plus == i, selected_count >= max_select);
         }
     }
+    draw_scrollbar(&local_metrics);
     set_ui_rect(finish_rect, cx, footer_y, 150, 40);
     set_ui_rect(confirm_rect, cx + 162, footer_y, 130, 40);
     draw_button_state(cx, footer_y, 150, 40, qty ? "End Building" : "Finish Build", 0, hover_finish, 0);
@@ -1388,10 +1668,12 @@ void print_character(const Character* ch) {
     if (!ch) return;
 #ifdef USE_EASYX
     int y = g_draw_y;
+    int h = clamp_int(g_main_h / 4, 190, 260);
+    int w = (h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
     int x = g_main_x + 16;
-    int w = clamp_int(g_main_w - 64, 360, 620);
-    DrawCharacterCard(ch, ch->char_id, x, y, w, UI_CHARACTER_CARD_H, 0, 0, !ch->is_alive);
-    g_draw_y += UI_CHARACTER_CARD_H + UI_GAP;
+    if (g_main_w > 560) x = g_main_x + (g_main_w - w) / 2;
+    DrawCharacterCard(ch, ch->char_id, x, y, w, h, 0, 0, !ch->is_alive);
+    g_draw_y += h + UI_GAP;
 #else
     printf("%s (ID:%d) HP:%d/%d Elem:%d Speed:%d %s\n",
            ch->name, ch->char_id, ch->hp, ch->max_hp, ch->element, ch->speed,
@@ -1424,15 +1706,21 @@ static void draw_battle_screen(GameState state) {
     UiRect battlefield = {};
     snprintf(buf, sizeof(buf), "Battlefield - Round %d", state.round_count);
     draw_center_battlefield_frame(buf, &battlefield);
-    int active_gap = UI_GAP + 8;
-    int active_w = (battlefield.w - (UI_PAD * 4) - active_gap) / 2;
-    int active_h = clamp_int(battlefield.h - 58, 116, UI_CHARACTER_CARD_H);
+    int active_gap = clamp_int(battlefield.w / 12, 42, 90);
+    int active_h = clamp_int(battlefield.h - 58, 170, 260);
+    int active_w = (active_h * UI_CARD_ASPECT_NUM) / UI_CARD_ASPECT_DEN;
+    if (active_w * 2 + active_gap > battlefield.w - UI_PAD * 2) {
+        active_w = (battlefield.w - UI_PAD * 2 - active_gap) / 2;
+        active_h = (active_w * UI_CARD_ASPECT_DEN) / UI_CARD_ASPECT_NUM;
+    }
     int active_y = battlefield.y + 42;
+    int pair_w = active_w * 2 + active_gap;
+    int active_x = battlefield.x + (battlefield.w - pair_w) / 2;
     DrawCharacterCard(&state.p1.team[state.p1.active_idx], state.p1.active_idx,
-                      battlefield.x + UI_PAD, active_y, active_w, active_h, 1, 0,
+                      active_x, active_y, active_w, active_h, 1, 0,
                       !state.p1.team[state.p1.active_idx].is_alive);
     DrawCharacterCard(&state.p2.team[state.p2.active_idx], state.p2.active_idx,
-                      battlefield.x + UI_PAD + active_w + active_gap, active_y, active_w, active_h, 1, 0,
+                      active_x + active_w + active_gap, active_y, active_w, active_h, 1, 0,
                       !state.p2.team[state.p2.active_idx].is_alive);
     settextcolor(RGB(74, 86, 70));
     outtextxy_clipped_utf8(battlefield.x + battlefield.w / 2 - 14, active_y + active_h / 2 - 8, 28, "VS");
@@ -1462,8 +1750,9 @@ static void draw_battle_screen(GameState state) {
         int card_w[MAX_HAND_SIZE] = {0};
         int card_h[MAX_HAND_SIZE] = {0};
         compute_planned_card_rects(active_player->hand_count, g_draw_y, footer_y, card_x, card_y, card_w, card_h);
+        UiRect viewport = { g_main_x + 24, g_draw_y, g_main_w - 72, footer_y - g_draw_y };
         for (int i = 0; i < active_player->hand_count; i++) {
-            if (card_y[i] + card_h[i] > footer_y) break;
+            if (card_y[i] < viewport.y || card_y[i] + card_h[i] > viewport.y + viewport.h) continue;
             DrawSkillCard(&active_player->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, 0,
                           active_player->energy < active_player->hand[i].energy_cost, 0);
         }
@@ -1474,8 +1763,30 @@ static void draw_battle_screen(GameState state) {
 #endif
 }
 
+static void draw_draft_overview_screen(GameState state) {
+#ifdef USE_EASYX
+    begin_deferred_present();
+    reset_draw_y();
+    draw_status_bar(&state, state.current_turn, "Draft");
+    draw_team_hp_panel(&state);
+    settextstyle_utf8(24, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(28, 36, 42));
+    outtextxy_clipped_utf8(g_main_x + UI_PAD + 4, g_draw_y, g_main_w - (UI_PAD * 2), "Prepare Your Team");
+    g_draw_y += 42;
+    settextstyle_utf8(18, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(74, 67, 55));
+    outtextxy_clipped_utf8(g_main_x + UI_PAD + 4, g_draw_y, g_main_w - (UI_PAD * 2), "Choose characters first, then build your deck.");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    end_deferred_present();
+#endif
+}
+
 void RenderGameBoard(GameState state) {
 #ifdef USE_EASYX
+    if (state.current_scene == SCENE_DRAFT) {
+        draw_draft_overview_screen(state);
+        return;
+    }
     draw_battle_screen(state);
 #else
     printf("\n=== Game Board (Round:%d) Current Turn: Player %d ===\n", state.round_count, state.current_turn);
@@ -1833,6 +2144,8 @@ card_select:
         int card_y[MAX_HAND_SIZE] = {0};
         int card_w[MAX_HAND_SIZE] = {0};
         int card_h[MAX_HAND_SIZE] = {0};
+        UiScrollState scroll_state = {};
+        UiScrollMetrics scroll_metrics = {};
         int hover_card = -1;
         int hover_back = 0;
         int need_redraw = 1;
@@ -1842,10 +2155,18 @@ card_select:
                 draw_planning_shell(&state, player_id, records, record_count, "Choose a card");
                 back_x = g_main_x + 16; back_y = bottom_button_y();
                 int card_start_y = g_draw_y + 10;
-                compute_planned_card_rects(p->hand_count, card_start_y, back_y, card_x, card_y, card_w, card_h);
+                UiRect viewport = { g_main_x + 24, card_start_y, g_main_w - 72, back_y - card_start_y - UI_GAP };
+                if (viewport.h < 80) viewport.h = 80;
+                int columns = compute_planned_card_rects(p->hand_count, card_start_y, back_y, card_x, card_y, card_w, card_h);
+                int content_h = p->hand_count > 0 ? grid_content_height(p->hand_count, columns, card_h[0]) : 0;
+                prepare_scroll_metrics(&scroll_state, &viewport, content_h, p->hand_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
                 for (int i = 0; i < p->hand_count; i++) {
-                    DrawSkillCard(&p->hand[i], i, card_x[i], card_y[i], card_w[i], card_h[i], 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
+                    int y = card_y[i] - scroll_state.offset;
+                    card_y[i] = y;
+                    if (y < viewport.y || y + card_h[i] > viewport.y + viewport.h) continue;
+                    DrawSkillCard(&p->hand[i], i, card_x[i], y, card_w[i], card_h[i], 0, hover_card == i, p->energy < p->hand[i].energy_cost, 0);
                 }
+                draw_scrollbar(&scroll_metrics);
                 draw_button_state(back_x, back_y, back_w, back_h, "Back", 0, hover_back, 0);
                 end_deferred_present();
                 need_redraw = 0;
@@ -1856,11 +2177,15 @@ card_select:
                 continue;
             }
             if (layout_changed_since(&layout_version)) goto card_select;
+            if (handle_scroll_message(&scroll_state, &scroll_metrics, &m)) {
+                need_redraw = 1;
+                continue;
+            }
             int new_hover_card = -1;
             int new_hover_back = 0;
             if (point_in_rect(m.x, m.y, back_x, back_y, back_w, back_h)) new_hover_back = 1;
             for (int i = 0; i < p->hand_count; i++) {
-                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                     new_hover_card = i;
                     break;
                 }
@@ -1876,7 +2201,7 @@ card_select:
                 goto main_menu;
             }
             for (int i = 0; i < p->hand_count; i++) {
-                if (!point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) continue;
+                if (!point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) || !point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) continue;
                 if (p->energy < p->hand[i].energy_cost) {
                     draw_overlay_message_kind("Not enough energy", UI_MSG_ERROR);
                     break;
@@ -2306,11 +2631,14 @@ single_character_select:
     int selected_idx = -1;
     int hover_idx = -1;
     int hover_confirm = 0;
+    UiScrollState scroll_state = {};
+    UiScrollMetrics scroll_metrics = {};
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
             reset_draw_y();
+            begin_deferred_present();
             draw_simple_status_bar("Character Draft");
             draw_team_hp_panel(NULL); // keep HP panel intact; callers render full state before calling select
             snprintf(buf, sizeof(buf), "Player %d - Character slot %d", player_id, slot_number);
@@ -2319,11 +2647,20 @@ single_character_select:
             int start_y = g_draw_y + 8;
             confirm_x = g_main_x + 24;
             confirm_y = bottom_button_y();
-            compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
+            UiRect viewport = { g_main_x + 24, start_y, g_main_w - 72, confirm_y - start_y - UI_GAP };
+            if (viewport.h < 80) viewport.h = 80;
+            int columns = compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
+            int content_h = g_char_count > 0 ? grid_content_height(g_char_count, columns, card_h[0]) : 0;
+            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
             for (int i = 0; i < g_char_count; i++) {
-                draw_character_option_panel(&g_all_characters[i], i, card_x[i], card_y[i], card_w[i], card_h[i], i == selected_idx, hover_idx == i, 0);
+                int y = card_y[i] - scroll_state.offset;
+                card_y[i] = y;
+                if (y < viewport.y || y + card_h[i] > viewport.y + viewport.h) continue;
+                draw_character_option_panel(&g_all_characters[i], i, card_x[i], y, card_w[i], card_h[i], i == selected_idx, hover_idx == i, 0);
             }
+            draw_scrollbar(&scroll_metrics);
             draw_button_state(confirm_x, confirm_y, 140, 40, "Confirm", selected_idx >= 0, hover_confirm, 0);
+            end_deferred_present();
             need_redraw = 0;
         }
 
@@ -2333,10 +2670,14 @@ single_character_select:
             continue;
         }
         if (layout_changed_since(&layout_version)) goto single_character_select;
+        if (handle_scroll_message(&scroll_state, &scroll_metrics, &m)) {
+            need_redraw = 1;
+            continue;
+        }
         int new_hover_idx = -1;
         int new_hover_confirm = 0;
         for (int i = 0; i < g_char_count; i++) {
-            if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                 new_hover_idx = i;
                 break;
             }
@@ -2350,7 +2691,7 @@ single_character_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
-                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                     selected_idx = i;
                     need_redraw = 1;
                     handled = 1;
@@ -2398,12 +2739,15 @@ multi_character_select:
     memset(selected, 0, sizeof(int) * g_char_count);
     int hover_idx = -1;
     int hover_confirm = 0;
+    UiScrollState scroll_state = {};
+    UiScrollMetrics scroll_metrics = {};
     MOUSEMSG m;
     int need_redraw = 1;
     while (1) {
         if (need_redraw) {
             char header[160];
             reset_draw_y();
+            begin_deferred_present();
             draw_simple_status_bar("Character Draft");
             draw_team_hp_panel(st);
             snprintf(header, sizeof(header), "Character Draft - Player %d", player_id);
@@ -2412,11 +2756,19 @@ multi_character_select:
             snprintf(header, sizeof(header), "Choose up to %d", max_select);
             draw_line(header);
             confirm_x = g_main_x + 24; confirm_y = bottom_button_y();
-            compute_card_grid_rects(g_char_count, g_draw_y + 8, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
-            begin_deferred_present();
+            int start_y = g_draw_y + 8;
+            UiRect viewport = { g_main_x + 24, start_y, g_main_w - 72, confirm_y - start_y - UI_GAP };
+            if (viewport.h < 80) viewport.h = 80;
+            int columns = compute_card_grid_rects(g_char_count, start_y, confirm_y - UI_GAP, UI_CHARACTER_CARD_H, card_x, card_y, card_w, card_h);
+            int content_h = g_char_count > 0 ? grid_content_height(g_char_count, columns, card_h[0]) : 0;
+            prepare_scroll_metrics(&scroll_state, &viewport, content_h, g_char_count > 0 ? card_h[0] + UI_GAP : 64, &scroll_metrics);
             for (int i = 0; i < g_char_count; i++) {
-                draw_character_option_panel(&g_all_characters[i], i, card_x[i], card_y[i], card_w[i], card_h[i], selected[i], hover_idx == i, 0);
+                int y = card_y[i] - scroll_state.offset;
+                card_y[i] = y;
+                if (y < viewport.y || y + card_h[i] > viewport.y + viewport.h) continue;
+                draw_character_option_panel(&g_all_characters[i], i, card_x[i], y, card_w[i], card_h[i], selected[i], hover_idx == i, 0);
             }
+            draw_scrollbar(&scroll_metrics);
             draw_button_state(confirm_x, confirm_y, 140, 40, "Confirm", 0, hover_confirm, 0);
             end_deferred_present();
             need_redraw = 0;
@@ -2438,10 +2790,14 @@ multi_character_select:
             free(selected);
             goto multi_character_select;
         }
+        if (handle_scroll_message(&scroll_state, &scroll_metrics, &m)) {
+            need_redraw = 1;
+            continue;
+        }
         int new_hover_idx = -1;
         int new_hover_confirm = 0;
         for (int i = 0; i < g_char_count; i++) {
-            if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) {
                 new_hover_idx = i;
                 break;
             }
@@ -2455,7 +2811,7 @@ multi_character_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < g_char_count; i++) {
-                if (point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_rect(m.x, m.y, card_x[i], card_y[i], card_w[i], card_h[i])) { selected[i] = !selected[i]; need_redraw = 1; handled = 1; break; }
             }
             if (!handled && point_in_rect(m.x, m.y, confirm_x, confirm_y, 140, 40)) {
                 int count = 0;
@@ -2489,11 +2845,12 @@ int SelectCardFromUI(int player_id, int current_deck_size) {
 single_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning -1"); return -1; }
-    int max_rows = visible_card_rows_for_current_layout();
-    int show = g_card_count < max_rows ? g_card_count : max_rows;
+    int show = g_card_count;
     UiRect card_rects[MAX_GLOBAL_CARDS] = {};
     UiRect finish_rect = {};
     UiRect confirm_rect = {};
+    UiScrollState scroll_state = {};
+    UiScrollMetrics scroll_metrics = {};
     int selected_idx = -1;
     int hover_card = -1;
     int hover_finish = 0;
@@ -2504,7 +2861,8 @@ single_card_select:
         if (need_redraw) {
             draw_deck_build_screen(player_id, current_deck_size, MAX_DECK_SIZE, NULL, show, selected_idx,
                                    hover_card, -1, -1, hover_finish, hover_confirm,
-                                   card_rects, NULL, NULL, &finish_rect, &confirm_rect);
+                                   card_rects, NULL, NULL, &finish_rect, &confirm_rect,
+                                   &scroll_state, &scroll_metrics);
             need_redraw = 0;
         }
 
@@ -2514,11 +2872,15 @@ single_card_select:
             continue;
         }
         if (layout_changed_since(&layout_version)) goto single_card_select;
+        if (handle_scroll_message(&scroll_state, &scroll_metrics, &m)) {
+            need_redraw = 1;
+            continue;
+        }
         int new_hover_card = -1;
         int new_hover_finish = 0;
         int new_hover_confirm = 0;
         for (int i = 0; i < show; i++) {
-            if (point_in_ui_rect(m.x, m.y, &card_rects[i])) {
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &card_rects[i])) {
                 new_hover_card = i;
                 break;
             }
@@ -2534,7 +2896,7 @@ single_card_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                if (point_in_ui_rect(m.x, m.y, &card_rects[i])) {
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &card_rects[i])) {
                     selected_idx = i;
                     need_redraw = 1;
                     handled = 1;
@@ -2580,12 +2942,13 @@ int SelectMultipleCardsFromUI(int player_id, int max_select, int* out_indices, i
 multi_card_select:
     int layout_version = g_ui_layout_version;
     if (g_card_count == 0) { draw_line("Global card pool empty, returning 0"); if (out_count) *out_count = 0; return 0; }
-    int max_rows = visible_card_rows_for_current_layout();
-    int show = g_card_count < max_rows ? g_card_count : max_rows;
+    int show = g_card_count;
     UiRect card_rects[MAX_GLOBAL_CARDS] = {};
     UiRect minus_rects[MAX_GLOBAL_CARDS] = {};
     UiRect plus_rects[MAX_GLOBAL_CARDS] = {};
     UiRect finish_rect = {};
+    UiScrollState scroll_state = {};
+    UiScrollMetrics scroll_metrics = {};
     int* qty = (int*)calloc(show, sizeof(int));
     if (!qty) { if (out_count) *out_count = 0; return 0; }
     int total = 0;
@@ -2599,7 +2962,8 @@ multi_card_select:
         if (need_redraw) {
             draw_deck_build_screen(player_id, total, max_select, qty, show, -1,
                                    hover_card, hover_minus, hover_plus, hover_finish, 0,
-                                   card_rects, minus_rects, plus_rects, &finish_rect, NULL);
+                                   card_rects, minus_rects, plus_rects, &finish_rect, NULL,
+                                   &scroll_state, &scroll_metrics);
             need_redraw = 0;
         }
 
@@ -2619,14 +2983,18 @@ multi_card_select:
             free(qty);
             goto multi_card_select;
         }
+        if (handle_scroll_message(&scroll_state, &scroll_metrics, &m)) {
+            need_redraw = 1;
+            continue;
+        }
         int new_hover_card = -1;
         int new_hover_minus = -1;
         int new_hover_plus = -1;
         int new_hover_finish = 0;
         for (int i = 0; i < show; i++) {
-            if (point_in_ui_rect(m.x, m.y, &card_rects[i])) new_hover_card = i;
-            if (point_in_ui_rect(m.x, m.y, &minus_rects[i])) new_hover_minus = i;
-            if (point_in_ui_rect(m.x, m.y, &plus_rects[i])) new_hover_plus = i;
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &card_rects[i])) new_hover_card = i;
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &minus_rects[i])) new_hover_minus = i;
+            if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &plus_rects[i])) new_hover_plus = i;
         }
         if (point_in_ui_rect(m.x, m.y, &finish_rect)) new_hover_finish = 1;
         if (new_hover_card != hover_card || new_hover_minus != hover_minus || new_hover_plus != hover_plus || new_hover_finish != hover_finish) {
@@ -2639,11 +3007,11 @@ multi_card_select:
         if (m.uMsg == WM_LBUTTONDOWN) {
             int handled = 0;
             for (int i = 0; i < show; i++) {
-                if (point_in_ui_rect(m.x, m.y, &minus_rects[i])) {
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &minus_rects[i])) {
                     if (qty[i] > 0) { qty[i]--; total--; }
                     need_redraw = 1; handled = 1; break;
                 }
-                if (point_in_ui_rect(m.x, m.y, &plus_rects[i])) {
+                if (point_in_ui_rect(m.x, m.y, &scroll_metrics.viewport) && point_in_ui_rect(m.x, m.y, &plus_rects[i])) {
                     if (total < max_select) { qty[i]++; total++; }
                     else draw_overlay_message_kind("Cannot exceed deck limit", UI_MSG_ERROR);
                     need_redraw = 1; handled = 1; break;
