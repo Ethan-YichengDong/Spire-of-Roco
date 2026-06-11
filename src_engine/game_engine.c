@@ -463,32 +463,22 @@ static int CountCardRecords(const ActionRecord* records, int record_count) {
     return count;
 }
 
-static void ResolvePlannedRound(GameState* state,
-                                int first_player_id,
-                                ActionRecord* p1_records,
-                                int p1_count,
-                                ActionRecord* p2_records,
-                                int p2_count) {
-    ActionRecord* first_records = (first_player_id == 1) ? p1_records : p2_records;
-    ActionRecord* second_records = (first_player_id == 1) ? p2_records : p1_records;
-    int first_count = (first_player_id == 1) ? p1_count : p2_count;
-    int second_count = (first_player_id == 1) ? p2_count : p1_count;
-    int second_player_id = (first_player_id == 1) ? 2 : 1;
-    int total_steps = CountCardRecords(first_records, first_count) + CountCardRecords(second_records, second_count);
+static void ResolvePlayerPlan(GameState* state,
+                              int player_id,
+                              ActionRecord* records,
+                              int record_count) {
+    Player* acting = (player_id == 1) ? &state->p1 : &state->p2;
+    Player* opponent = (player_id == 1) ? &state->p2 : &state->p1;
+    int total_steps = CountCardRecords(records, record_count);
     int step = 1;
 
-    for (int i = 0; i < first_count; i++) {
-        if (ResolveOneRecord(state, &first_records[i], step, total_steps)) step++;
-    }
-
-    Player* second_player = (second_player_id == 1) ? &state->p1 : &state->p2;
-    if (!PlayerHasAliveCharacter(second_player)) {
-        return;
-    }
-
-    for (int i = 0; i < second_count; i++) {
-        if (ResolveOneRecord(state, &second_records[i], step, total_steps)) step++;
-        if (!PlayerHasAliveCharacter(second_player)) break;
+    state->current_turn = player_id;
+    for (int i = 0; i < record_count; i++) {
+        if (!PlayerHasAliveCharacter(acting) ||
+            !PlayerHasAliveCharacter(opponent)) {
+            break;
+        }
+        if (ResolveOneRecord(state, &records[i], step, total_steps)) step++;
     }
 }
 
@@ -691,42 +681,39 @@ static int RunBattleLoop(int mode, AiPolicy ai_policy) {
         memset(p2_records, 0, sizeof(p2_records));
         LogGameState("BeforeRound", &state);
 
-        if (p1_first) {
-            state.current_turn = 1;
-            CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
+        int first_player_id = p1_first ? 1 : 2;
+        int second_player_id = p1_first ? 2 : 1;
+        ActionRecord* first_records = (first_player_id == 1) ? p1_records : p2_records;
+        ActionRecord* second_records = (second_player_id == 1) ? p1_records : p2_records;
+        int* first_count = (first_player_id == 1) ? &p1_count : &p2_count;
+        int* second_count = (second_player_id == 1) ? &p1_count : &p2_count;
+
+        state.current_turn = first_player_id;
+        CollectPlayerPlan(&state, first_player_id, mode, first_records, first_count);
+        if (IsReturnToMenuRequested()) {
+            CloseBattleLog();
+            return 1;
+        }
+        ResolvePlayerPlan(&state, first_player_id, first_records, *first_count);
+
+        if (PlayerHasAliveCharacter(&state.p1) &&
+            PlayerHasAliveCharacter(&state.p2)) {
+            state.current_turn = second_player_id;
+            CollectPlayerPlan(&state, second_player_id, mode, second_records, second_count);
             if (IsReturnToMenuRequested()) {
                 CloseBattleLog();
                 return 1;
             }
-
-            state.current_turn = 2;
-            CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
-            if (IsReturnToMenuRequested()) {
-                CloseBattleLog();
-                return 1;
-            }
-
-            ResolvePlannedRound(&state, 1, p1_records, p1_count, p2_records, p2_count);
-        } else {
-            state.current_turn = 2;
-            CollectPlayerPlan(&state, 2, mode, p2_records, &p2_count);
-            if (IsReturnToMenuRequested()) {
-                CloseBattleLog();
-                return 1;
-            }
-
-            state.current_turn = 1;
-            CollectPlayerPlan(&state, 1, mode, p1_records, &p1_count);
-            if (IsReturnToMenuRequested()) {
-                CloseBattleLog();
-                return 1;
-            }
-
-            ResolvePlannedRound(&state, 2, p1_records, p1_count, p2_records, p2_count);
+            ResolvePlayerPlan(&state, second_player_id, second_records, *second_count);
         }
         if (IsReturnToMenuRequested()) {
             CloseBattleLog();
             return 1;
+        }
+
+        if (!PlayerHasAliveCharacter(&state.p1) ||
+            !PlayerHasAliveCharacter(&state.p2)) {
+            break;
         }
 
         EndTurn(&state);
@@ -743,6 +730,7 @@ static int RunBattleLoop(int mode, AiPolicy ai_policy) {
     RenderGameBoard(state);
 
     int p1_alive = PlayerHasAliveCharacter(&state.p1);
+    int winner_id = p1_alive ? 1 : 2;
     printf("\n========== Game Over ==========\n");
     if (p1_alive) {
         printf("Player 1 wins.\n");
@@ -752,8 +740,10 @@ static int RunBattleLoop(int mode, AiPolicy ai_policy) {
     printf("Total rounds: %d\n", state.round_count);
     printf("===============================\n");
 
+    int play_again = ShowVictoryScreen(state, winner_id);
+
     CloseBattleLog();
-    return 0;
+    return play_again ? 2 : 0;
 }
 
 void RunGameLoop() {
@@ -775,7 +765,10 @@ void RunGameLoop() {
         ClearReturnToMenuRequest();
         MenuSelection selection = ShowMainMenu();
         if (selection == MENU_PVP) {
-            RunBattleLoop(MODE_PVP, AI_POLICY_HEURISTIC);
+            int result;
+            do {
+                result = RunBattleLoop(MODE_PVP, AI_POLICY_HEURISTIC);
+            } while (result == 2);
 #ifdef USE_EASYX
             continue;
 #else
@@ -788,7 +781,10 @@ void RunGameLoop() {
                 continue;
             }
             ClearReturnToMenuRequest();
-            RunBattleLoop(MODE_PVE, ai_policy);
+            int result;
+            do {
+                result = RunBattleLoop(MODE_PVE, ai_policy);
+            } while (result == 2);
 #ifdef USE_EASYX
             continue;
 #else

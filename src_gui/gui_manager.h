@@ -22,6 +22,8 @@ Action GetHumanInputFromUI(int player_id, GameState state);
 Action GetPlannedInputFromUI(int player_id, GameState state, const ActionRecord* records, int record_count, int* edit_index);
 // 回合末结算时逐条展示操作和当前战况
 void ShowResolutionStep(GameState state, const ActionRecord* record, const ResolutionReport* report, int step_number, int step_total);
+// Shows the final victory prompt. Returns 1 for Play Again, 0 for Main Menu.
+int ShowVictoryScreen(GameState state, int winner_id);
 // 角色选择阶段：让玩家从全局角色池中为队伍槽位(slot:0/1/2)选择1个角色，返回在g_all_characters中的索引
 int SelectCharacterFromUI(int player_id, int slot_number);
 // 卡牌选择阶段：让玩家从全局卡牌池中为牌库挑选卡牌，返回在g_all_cards中的索引，返回-1表示结束选择

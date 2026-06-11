@@ -2142,6 +2142,76 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
 #endif
 }
 
+int ShowVictoryScreen(GameState state, int winner_id) {
+#ifdef USE_EASYX
+victory_screen:
+    int layout_version = g_ui_layout_version;
+    int hover_menu = 0;
+    int hover_again = 0;
+    int need_redraw = 1;
+    MOUSEMSG m;
+
+    while (1) {
+        update_layout();
+        int panel_w = clamp_int(g_ui_w / 2, 420, 620);
+        int panel_h = clamp_int(g_ui_h / 3, 240, 320);
+        int panel_x = (g_ui_w - panel_w) / 2;
+        int panel_y = (g_ui_h - panel_h) / 2;
+        int button_w = clamp_int((panel_w - 72) / 2, 160, 230);
+        int button_h = 48;
+        int menu_x = panel_x + 24;
+        int again_x = panel_x + panel_w - 24 - button_w;
+        int button_y = panel_y + panel_h - 72;
+
+        if (need_redraw) {
+            draw_battle_screen(state);
+            setfillcolor(RGB(23, 29, 34));
+            solidrectangle(0, 0, g_ui_w, g_ui_h);
+            draw_soft_panel(panel_x, panel_y, panel_w, panel_h, RGB(244, 238, 212), RGB(78, 63, 42));
+            setfillcolor(RGB(56, 100, 139));
+            fillrectangle(panel_x, panel_y, panel_x + panel_w, panel_y + 8);
+
+            char title[128];
+            snprintf(title, sizeof(title), "Congratulations! Player %d Wins!", winner_id);
+            settextstyle_utf8(34, 0, UI_FONT_FACE_UTF8);
+            settextcolor(RGB(31, 37, 41));
+            outtextxy_centered_utf8(panel_x + 24, panel_y + 54, panel_w - 48, 48, title);
+
+            settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+            settextcolor(RGB(84, 76, 62));
+            outtextxy_centered_utf8(panel_x + 48, panel_y + 116, panel_w - 96, 34, "Choose your next step");
+
+            draw_button_state(menu_x, button_y, button_w, button_h, "Main Menu", 0, hover_menu, 0);
+            draw_button_state(again_x, button_y, button_w, button_h, "Play Again", 0, hover_again, 0);
+            present_frame();
+            need_redraw = 0;
+        }
+
+        if (!poll_mouse_message(&m)) {
+            if (IsReturnToMenuRequested()) return 0;
+            if (layout_changed_since(&layout_version)) goto victory_screen;
+            continue;
+        }
+        if (layout_changed_since(&layout_version)) goto victory_screen;
+
+        int new_hover_menu = point_in_rect(m.x, m.y, menu_x, button_y, button_w, button_h);
+        int new_hover_again = point_in_rect(m.x, m.y, again_x, button_y, button_w, button_h);
+        if (new_hover_menu != hover_menu || new_hover_again != hover_again) {
+            hover_menu = new_hover_menu;
+            hover_again = new_hover_again;
+            need_redraw = 1;
+        }
+        if (m.uMsg == WM_LBUTTONDOWN) {
+            if (hover_menu) return 0;
+            if (hover_again) return 1;
+        }
+    }
+#else
+    printf("Congratulations! Player %d Wins!\n", winner_id);
+    return 0;
+#endif
+}
+
 
 int SelectCharacterFromUI(int player_id, int slot_number) {
 #ifdef USE_EASYX

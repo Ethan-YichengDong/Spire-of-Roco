@@ -100,6 +100,12 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
     RenderGameBoard(state);
 }
 
+int ShowVictoryScreen(GameState state, int winner_id) {
+    (void)state;
+    printf("Congratulations! Player %d Wins!\n", winner_id);
+    return 0;
+}
+
 int SelectCharacterFromUI(int player_id, int slot_number) {
     int p1_defaults[] = {0, 1, 2};
     int p2_defaults[] = {3, 0, 1};
