@@ -3,16 +3,12 @@ Spire of Roco
 Credits
 
 Game Design:
-Ethan-YichengDong
+健雄书院 董益成 251880556
 
 Programming:
-Spire of Roco Contributors
+健雄书院 董益成 251880556
+健雄书院 曹子墨 251880566
+健雄书院 贾璐琦 251880471
+健雄书院 吕昕睿 251880052
 
-Art:
-Placeholder UI graphics and temporary interface assets
 
-Special Thanks:
-Players, testers, and everyone who supports the project
-
-Encoding:
-Please save this file as UTF-8.

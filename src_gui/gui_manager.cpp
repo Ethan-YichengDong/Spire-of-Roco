@@ -1217,9 +1217,9 @@ static void draw_main_menu_screen(MenuSelection hover_choice) {
     int bx = g_main_x + (g_main_w - menu_w) / 2;
     int by = g_main_y + clamp_int(g_main_h / 5, 70, 130);
     int bh = 58;
-    settextstyle_utf8(34, 0, UI_FONT_FACE_UTF8);
+    settextstyle_utf8(42, 0, UI_FONT_FACE_UTF8);
     settextcolor(RGB(26, 36, 45));
-    outtextxy_clipped_utf8(g_main_x + UI_PAD, by - 82, g_main_w - (UI_PAD * 2), "Spire of Roco");
+    outtextxy_centered_utf8(g_main_x + UI_PAD, by - 92, g_main_w - (UI_PAD * 2), 56, "Spire of Roco");
     settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
     draw_menu_button(bx, by, menu_w, bh, "PVP Mode", hover_choice == MENU_PVP);
     draw_menu_button(bx, by + 76, menu_w, bh, "PVE Mode", hover_choice == MENU_PVE);
@@ -1280,26 +1280,40 @@ static void draw_credits_screen(const char* credits_text, int hover_back) {
     begin_deferred_present();
     reset_draw_y();
     draw_simple_status_bar("Credits");
-    draw_section_title(g_main_x + UI_PAD + 4, g_draw_y, "Credits");
     int text_x = g_main_x + 28;
-    int text_y = g_draw_y + 44;
+    int text_y = g_main_y + clamp_int(g_main_h / 8, 42, 86);
     int text_w = g_main_w - 56;
-    int line_h = 24;
-    int max_lines = (bottom_button_y() - text_y - UI_GAP) / line_h;
+    int title_h = scaled_font_height(40) + 10;
+    int line_h = scaled_font_height(22) + 9;
+    int section_gap = 10;
+    int current_y = text_y;
+    int max_y = bottom_button_y() - UI_GAP;
     const char* fallback = "Credits file not found. Please edit docs/credits.txt.";
     const char* src = (credits_text && credits_text[0] != '\0') ? credits_text : fallback;
     char line[256];
     int line_len = 0;
-    int shown = 0;
+    int drew_title = 0;
     settextcolor(RGB(38, 44, 48));
     for (const char* p = src; ; p++) {
         char ch = *p;
         if (ch == '\r') continue;
         if (ch == '\n' || ch == '\0') {
             line[line_len] = '\0';
-            if (shown < max_lines) {
-                outtextxy_clipped_utf8(text_x, text_y + shown * line_h, text_w, line);
-                shown++;
+            if (line_len == 0) {
+                if (drew_title) current_y += section_gap;
+            } else if (current_y < max_y) {
+                if (!drew_title) {
+                    settextstyle_utf8(40, 0, UI_FONT_FACE_UTF8);
+                    settextcolor(RGB(26, 36, 45));
+                    outtextxy_centered_utf8(text_x, current_y, text_w, title_h, line);
+                    current_y += title_h + 12;
+                    drew_title = 1;
+                } else {
+                    settextstyle_utf8(22, 0, UI_FONT_FACE_UTF8);
+                    settextcolor(RGB(38, 44, 48));
+                    outtextxy_centered_utf8(text_x, current_y, text_w, line_h, line);
+                    current_y += line_h;
+                }
             }
             line_len = 0;
             if (ch == '\0') break;
