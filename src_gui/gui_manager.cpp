@@ -2002,7 +2002,19 @@ static int collect_resolution_targets(const GameState* state, const ActionRecord
     if (!state || !record || !targets || max_targets <= 0) return 0;
     if (report && report->event_count > 0) {
         for (int i = 0; i < report->event_count && count < max_targets; i++) {
-            const Character* ch = find_character_by_name(state, report->events[i].target_name);
+            const DamageResolutionEvent* event = &report->events[i];
+            const Player* target_player = NULL;
+            const Character* ch = NULL;
+            if (event->target_player_id == state->p1.player_id) target_player = &state->p1;
+            else if (event->target_player_id == state->p2.player_id) target_player = &state->p2;
+
+            if (target_player &&
+                event->target_slot_idx >= 0 &&
+                event->target_slot_idx < TEAM_SIZE) {
+                ch = &target_player->team[event->target_slot_idx];
+            } else {
+                ch = find_character_by_name(state, event->target_name);
+            }
             if (!ch) continue;
             int duplicate = 0;
             for (int k = 0; k < count; k++) {

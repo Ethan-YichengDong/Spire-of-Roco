@@ -117,6 +117,8 @@ typedef struct {
 } ActionRecord;
 
 typedef struct {
+    int target_player_id;
+    int target_slot_idx;
     char target_name[MAX_NAME_LEN];
     int raw_damage;
     int element_bonus_damage;

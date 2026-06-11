@@ -59,6 +59,8 @@ static int get_element_multiplier(int raw_damage, ElementType attack_element, Ch
 }
 
 static void append_damage_report(ResolutionReport* report,
+                                 int target_player_id,
+                                 int target_slot_idx,
                                  Character* target,
                                  int raw_damage,
                                  int element_bonus_damage,
@@ -69,6 +71,8 @@ static void append_damage_report(ResolutionReport* report,
     if (!report || report->event_count >= MAX_RESOLUTION_EVENTS) return;
 
     DamageResolutionEvent* event = &report->events[report->event_count++];
+    event->target_player_id = target_player_id;
+    event->target_slot_idx = target_slot_idx;
     snprintf(event->target_name, sizeof(event->target_name), "%s", target->name);
     event->raw_damage = raw_damage;
     event->element_bonus_damage = element_bonus_damage;
@@ -132,8 +136,13 @@ void CommitDamageAndCheck(int final_damage, Character* target) {
 // ============================================================
 
 // 对单个目标执行伤害/护盾/治疗/Buff结算
-// 伤害和护盾仅对存活目标生效；治疗可作用于阵亡目标以触发复活
-static void resolve_on_target(Card* played_card, Character* attacker, Character* target_char, ResolutionReport* report) {
+// 伤害、护盾和治疗仅对存活目标生效；阵亡角色不会被普通治疗复活
+static void resolve_on_target(Card* played_card,
+                              Character* attacker,
+                              Character* target_char,
+                              int target_player_id,
+                              int target_slot_idx,
+                              ResolutionReport* report) {
     // 伤害（仅存活目标）
     if (target_char->is_alive && played_card->base_damage > 0) {
         int hp_before = target_char->hp;
@@ -156,6 +165,8 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
         base_actual_damage = base_without_element_after_shield;
         if (base_actual_damage > hp_before) base_actual_damage = hp_before;
         append_damage_report(report,
+                             target_player_id,
+                             target_slot_idx,
                              target_char,
                              raw,
                              actual_damage - base_actual_damage,
@@ -170,8 +181,8 @@ static void resolve_on_target(Card* played_card, Character* attacker, Character*
         target_char->buffs[BUFF_SHIELD] += played_card->base_defense;
     }
 
-    // 治疗（含复活：对阵亡目标亦可生效）
-    if (played_card->base_heal > 0) {
+    // 治疗（仅对存活目标生效）
+    if (target_char->is_alive && played_card->base_heal > 0) {
         target_char->hp += played_card->base_heal;
         if (target_char->hp > target_char->max_hp) target_char->hp = target_char->max_hp;
         toggle_is_alive(target_char);
@@ -219,11 +230,25 @@ static void apply_action(Player* acting_player, Player* target_player, Action ac
     if (played_card.target_type == TARGET_ENEMY_ALL || played_card.target_type == TARGET_SELF_ALL) {
         Player* aoe_team = (played_card.target_type == TARGET_ENEMY_ALL) ? target_player : acting_player;
         for (int i = 0; i < TEAM_SIZE; i++) {
-            resolve_on_target(&played_card, active_char, &aoe_team->team[i], report);
+            int target_player_id = (played_card.target_type == TARGET_ENEMY_ALL)
+                                   ? target_player->player_id
+                                   : acting_player->player_id;
+            resolve_on_target(&played_card, active_char, &aoe_team->team[i],
+                              target_player_id, i, report);
         }
     } else {
         Character* target_char = resolve_target(acting_player, target_player, action.target_idx, played_card.target_type);
-        resolve_on_target(&played_card, active_char, target_char, report);
+        int target_slot_idx = action.target_idx;
+        int target_player_id = (played_card.target_type == TARGET_SELF_SINGLE)
+                               ? acting_player->player_id
+                               : target_player->player_id;
+        if (target_slot_idx < 0 || target_slot_idx >= TEAM_SIZE) {
+            target_slot_idx = (played_card.target_type == TARGET_SELF_SINGLE)
+                              ? acting_player->active_idx
+                              : target_player->active_idx;
+        }
+        resolve_on_target(&played_card, active_char, target_char,
+                          target_player_id, target_slot_idx, report);
     }
 
     // 出手后卡牌移入弃牌堆

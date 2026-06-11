@@ -95,6 +95,9 @@ void ShowResolutionStep(GameState state, const ActionRecord* record, const Resol
                    event->shield_absorbed,
                    event->hp_before,
                    event->hp_after);
+            printf("    target_player=%d target_slot=%d\n",
+                   event->target_player_id,
+                   event->target_slot_idx);
         }
     }
     RenderGameBoard(state);
