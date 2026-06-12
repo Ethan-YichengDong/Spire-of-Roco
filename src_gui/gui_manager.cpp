@@ -127,6 +127,18 @@ static int bottom_button_y() {
     return g_ui_h - g_ui_margin - UI_BUTTON_H;
 }
 
+static int credits_back_button_w() {
+    return 210;
+}
+
+static int credits_back_button_h() {
+    return 60;
+}
+
+static int credits_back_button_y() {
+    return g_ui_h - g_ui_margin - credits_back_button_h();
+}
+
 static void invalidate_ui_assets() {
     g_ui_assets_ready = 0;
 }
@@ -644,6 +656,56 @@ static void draw_simple_status_bar(const char* title) {
     outtextxy_clipped_utf8(g_ui_margin, 12, hotkey_x - g_ui_margin - 8, title ? title : "Spire of Roco");
     outtextxy_clipped_utf8(hotkey_x, 12, hotkey_w, "Esc: Quit  F11: Toggle");
     draw_global_menu_button(show_menu_button);
+    g_draw_y = g_main_y + 14;
+}
+
+static void draw_credits_menu_button(int visible) {
+    g_menu_button_visible = visible;
+    if (!visible) {
+        g_menu_button_x = g_menu_button_y = g_menu_button_w = g_menu_button_h = 0;
+        return;
+    }
+
+    g_menu_button_w = clamp_int(g_ui_w / 8, 150, 210);
+    g_menu_button_h = clamp_int(g_status_h - 8, 38, 48);
+    g_menu_button_x = g_ui_w - g_ui_margin - g_menu_button_w;
+    g_menu_button_y = (g_status_h - g_menu_button_h) / 2;
+
+    setfillcolor(RGB(74, 94, 124));
+    fillrectangle(g_menu_button_x, g_menu_button_y,
+                  g_menu_button_x + g_menu_button_w,
+                  g_menu_button_y + g_menu_button_h);
+    setlinecolor(RGB(36, 54, 78));
+    rectangle(g_menu_button_x, g_menu_button_y,
+              g_menu_button_x + g_menu_button_w,
+              g_menu_button_y + g_menu_button_h);
+    settextstyle_utf8(27, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(255, 250, 230));
+    outtextxy_centered_utf8(g_menu_button_x, g_menu_button_y,
+                            g_menu_button_w, g_menu_button_h,
+                            "Main Menu");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
+}
+
+static void draw_credits_status_bar(const char* title) {
+    update_layout();
+    int menu_w = clamp_int(g_ui_w / 8, 150, 210);
+    int menu_x = g_ui_w - g_ui_margin - menu_w;
+    int hotkey_w = clamp_int(g_ui_w / 4, 260, 360);
+    int hotkey_x = menu_x - hotkey_w - 10;
+    draw_art_or_fill(&g_art_status_panel, 0, 0, g_ui_w, g_status_h, RGB(238, 244, 252));
+    setlinecolor(RGB(70, 95, 130));
+    rectangle(0, 0, g_ui_w - 1, g_status_h);
+    settextstyle_utf8(30, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(26, 36, 45));
+    int text_h = scaled_font_height(30);
+    int text_y = (g_status_h - text_h) / 2;
+    outtextxy_clipped_utf8(g_ui_margin, text_y, hotkey_x - g_ui_margin - 8, title ? title : "Spire of Roco");
+    outtextxy_clipped_utf8(hotkey_x, text_y, hotkey_w, "Esc: Quit  F11: Toggle");
+    draw_credits_menu_button(1);
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
     g_draw_y = g_main_y + 14;
 }
 
@@ -1687,15 +1749,17 @@ static std::string read_text_file_utf8(const char* path) {
 static void draw_credits_screen(const char* credits_text, int hover_back) {
     begin_deferred_present();
     reset_draw_y();
-    draw_simple_status_bar("Credits");
+    draw_credits_status_bar("Credits");
     int text_x = g_main_x + 28;
     int text_y = g_main_y + clamp_int(g_main_h / 8, 42, 86);
     int text_w = g_main_w - 56;
-    int title_h = scaled_font_height(40) + 10;
-    int line_h = scaled_font_height(22) + 9;
-    int section_gap = 10;
+    const int credits_title_font = 60;
+    const int credit_info_font = 39;
+    int title_h = scaled_font_height(credits_title_font) + 15;
+    int line_h = scaled_font_height(credit_info_font) + 15;
+    int section_gap = 15;
     int current_y = text_y;
-    int max_y = bottom_button_y() - UI_GAP;
+    int max_y = credits_back_button_y() - UI_GAP;
     const char* fallback = "Credits file not found. Please edit docs/credits.txt.";
     const char* src = (credits_text && credits_text[0] != '\0') ? credits_text : fallback;
     char line[256];
@@ -1711,13 +1775,13 @@ static void draw_credits_screen(const char* credits_text, int hover_back) {
                 if (drew_title) current_y += section_gap;
             } else if (current_y < max_y) {
                 if (!drew_title) {
-                    settextstyle_utf8(40, 0, UI_FONT_FACE_UTF8);
+                    settextstyle_utf8(credits_title_font, 0, UI_FONT_FACE_UTF8);
                     settextcolor(RGB(26, 36, 45));
                     outtextxy_centered_utf8(text_x, current_y, text_w, title_h, line);
-                    current_y += title_h + 12;
+                    current_y += title_h + 18;
                     drew_title = 1;
                 } else {
-                    settextstyle_utf8(22, 0, UI_FONT_FACE_UTF8);
+                    settextstyle_utf8(credit_info_font, 0, UI_FONT_FACE_UTF8);
                     settextcolor(RGB(38, 44, 48));
                     outtextxy_centered_utf8(text_x, current_y, text_w, line_h, line);
                     current_y += line_h;
@@ -1729,7 +1793,24 @@ static void draw_credits_screen(const char* credits_text, int hover_back) {
         }
         if (line_len < (int)sizeof(line) - 1) line[line_len++] = ch;
     }
-    draw_button_state(g_main_x + 24, bottom_button_y(), 140, 40, "Back", 0, hover_back, 0);
+    int back_h = credits_back_button_h();
+    int back_font = 27;
+    int back_label_h = scaled_font_height(back_font);
+    int back_x = g_main_x + 24;
+    int back_y = credits_back_button_y();
+    int back_w = credits_back_button_w();
+    draw_art_or_fill(&g_art_button_idle, back_x, back_y, back_w, back_h, RGB(236, 230, 198));
+    if (hover_back) {
+        setfillcolor(RGB(246, 238, 207));
+        fillrectangle(back_x + 2, back_y + 2, back_x + back_w - 2, back_y + back_h - 2);
+    }
+    setlinecolor(hover_back ? RGB(80, 113, 154) : RGB(65, 56, 43));
+    rectangle(back_x, back_y, back_x + back_w, back_y + back_h);
+    settextstyle_utf8(back_font, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(29, 31, 30));
+    outtextxy_clipped_utf8(back_x + 18, back_y + (back_h - back_label_h) / 2, back_w - 36, "Back");
+    settextstyle_utf8(20, 0, UI_FONT_FACE_UTF8);
+    settextcolor(RGB(31, 37, 41));
     end_deferred_present();
 }
 
@@ -3321,8 +3402,9 @@ credits_screen:
         }
         if (layout_changed_since(&layout_version)) goto credits_screen;
         int back_x = g_main_x + 24;
-        int back_y = bottom_button_y();
-        int new_hover_back = point_in_rect(m.x, m.y, back_x, back_y, 140, 40);
+        int back_y = credits_back_button_y();
+        int new_hover_back = point_in_rect(m.x, m.y, back_x, back_y,
+                                           credits_back_button_w(), credits_back_button_h());
         if (new_hover_back != hover_back) {
             hover_back = new_hover_back;
             need_redraw = 1;
